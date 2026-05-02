@@ -245,7 +245,7 @@ def fshare_get_folder(folder_id):
 def reply_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("/add"), KeyboardButton("/info")"],
+            [KeyboardButton("/add"), KeyboardButton("/info")],
             [KeyboardButton("/tasks"), KeyboardButton("/clear")],
         ],
         resize_keyboard=True,
