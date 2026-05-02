@@ -154,7 +154,7 @@ echo -e "${YELLOW}  →${NC} Tạo thư mục bot..."
 mkdir -p "$BOT_DIR"
 
 echo -e "${YELLOW}  →${NC} Cài thư viện python-telegram-bot..."
-pip3 install python-telegram-bot --break-system-packages -q
+pip3 install "python-telegram-bot[job-queue]" --break-system-packages -q
 if [ $? -ne 0 ]; then
     echo -e "${RED}  ✗ Cài thư viện thất bại.${NC}"
     exit 1
