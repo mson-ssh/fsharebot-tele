@@ -27,8 +27,16 @@ from telegram.ext import (
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 def load_config():
+    import base64
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+        raw = json.load(f)
+    decoded = {}
+    for k, v in raw.items():
+        try:
+            decoded[k] = base64.b64decode(v.encode()).decode("utf-8")
+        except Exception:
+            decoded[k] = v  # fallback neu chua ma hoa
+    return decoded
 
 _cfg       = load_config()
 BOT_TOKEN  = _cfg["BOT_TOKEN"]
@@ -89,9 +97,22 @@ def _ds_get(path, params=None):
         params["_sid"] = ds_sid
     qs  = urllib.parse.urlencode(params)
     url = f"{DS_HOST}/webapi/{path}?{qs}"
-    req  = urllib.request.Request(url)
-    resp = urllib.request.urlopen(req, timeout=10)
-    return json.loads(resp.read())
+    try:
+        req  = urllib.request.Request(url)
+        resp = urllib.request.urlopen(req, timeout=10)
+        return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            # Re-login va thu lai
+            ds_sid = None
+            if ds_login():
+                params["_sid"] = ds_sid
+                qs  = urllib.parse.urlencode(params)
+                url = f"{DS_HOST}/webapi/{path}?{qs}"
+                req  = urllib.request.Request(url)
+                resp = urllib.request.urlopen(req, timeout=10)
+                return json.loads(resp.read())
+        raise
 
 def ds_login():
     global ds_sid
@@ -166,17 +187,21 @@ def ds_statistic():
     return {}
 
 def ds_disk_info():
-    """Lay thong tin disk qua SYNO.FileStation.Info"""
-    data = ds_request("FileStation/info.cgi", {
-        "api":     "SYNO.FileStation.Info",
-        "version": "2",
-        "method":  "getinfo",
-    })
-    if data.get("success"):
-        volumes = data["data"].get("items", [])
-        total_free = sum(int(v.get("free_space", 0)) for v in volumes if v.get("free_space"))
-        total_size = sum(int(v.get("total_space", 0)) for v in volumes if v.get("total_space"))
-        return total_free, total_size
+    """Lay thong tin disk qua SYNO.DownloadStation.Info"""
+    try:
+        data = ds_request("DownloadStation/info.cgi", {
+            "api":     "SYNO.DownloadStation.Info",
+            "version": "1",
+            "method":  "getinfo",
+        })
+        if data.get("success"):
+            info = data["data"]
+            # DS Info tra ve thong tin volume
+            free = int(info.get("free_space", 0))
+            total = 0
+            return free, total
+    except Exception:
+        pass
     return 0, 0
 
 # ── Fshare folder ─────────────────────────────────────────────────────────────
