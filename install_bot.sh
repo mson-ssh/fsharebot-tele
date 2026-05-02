@@ -50,7 +50,31 @@ echo ""
 while true; do
     read -p "  Nhập lựa chọn [1/2/3/4]: " CHOICE
     case "$CHOICE" in
-        1|2) break ;;
+        1) break ;;
+        2)
+            if [ -f "$CONFIG_FILE" ]; then
+                echo ""
+                echo -e "${YELLOW}  →${NC} Tim thay config cu, dang cap nhat bot..."
+                systemctl stop fshare-bot 2>/dev/null
+                curl -fsSL "$REPO/fshare_bot.py" -o "$BOT_FILE"
+                if [ $? -ne 0 ]; then
+                    echo -e "${RED}  ✗ Tai fshare_bot.py that bai.${NC}"
+                    exit 1
+                fi
+                systemctl daemon-reload 2>/dev/null
+                systemctl start fshare-bot 2>/dev/null
+                sleep 2
+                if systemctl is-active --quiet fshare-bot; then
+                    echo -e "${GREEN}  [OK] Cap nhat hoan tat! Bot dang chay.${NC}"
+                else
+                    echo -e "${RED}  [WARN] Kiem tra log: journalctl -u fshare-bot${NC}"
+                fi
+                echo ""
+                exit 0
+            else
+                echo -e "${RED}  ✗ Khong tim thay config cu. Vui long chon 1 de cai moi.${NC}"
+            fi
+            ;;
         3)
             echo ""
             read -p "  Xác nhận gỡ cài đặt? [y/N]: " CONFIRM
