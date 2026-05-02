@@ -119,8 +119,8 @@ done
 
 # DS Port
 echo ""
-read -p "  Port DS (mặc định: 5000): " DS_PORT
-DS_PORT="${DS_PORT:-5000}"
+read -p "  Port DS (mặc định: 2026): " DS_PORT
+DS_PORT="${DS_PORT:-2026}"
 DS_HOST="http://localhost:$DS_PORT"
 
 echo ""

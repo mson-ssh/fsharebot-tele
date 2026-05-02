@@ -2,52 +2,46 @@
 # -*- coding: utf-8 -*-
 """
 Fshare.vn Telegram Bot for Synology Download Station
-Chạy trực tiếp trên NAS
 """
 
 import json
 import logging
+import os
 import re
 import urllib.request
 import urllib.parse
-import urllib.error
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
 )
 
-# ── Cấu hình ─────────────────────────────────────────────────────────────────
-import os
-
+# ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 def load_config():
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
-_cfg = load_config()
-
+_cfg       = load_config()
 BOT_TOKEN  = _cfg["BOT_TOKEN"]
 ALLOWED_ID = int(_cfg["ALLOWED_ID"])
 DS_HOST    = _cfg["DS_HOST"]
 DS_USER    = _cfg["DS_USER"]
 DS_PASS    = _cfg["DS_PASS"]
 
-FSHARE_API  = "https://api.fshare.vn/api/"
-FSHARE_KEY  = "dMnqMMZMUnN5YpvKENaEhdQQ5jxDqddt"
-USERAGENT   = "pyLoad-B1RS5N"
+USERAGENT = "pyLoad-B1RS5N"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ── Session store (in-memory) ─────────────────────────────────────────────────
-user_sessions = {}   # { chat_id: { "folder_links": [...], "folder_name": "" } }
-ds_sid        = None # DS session ID
+# ── Session store ─────────────────────────────────────────────────────────────
+user_sessions = {}
+ds_sid        = None
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -68,10 +62,8 @@ def format_size(size_bytes):
 # ── Fshare API ────────────────────────────────────────────────────────────────
 
 def fshare_get_folder(folder_id):
-    """Lấy toàn bộ link file trong folder (không cần đăng nhập)"""
     links = []
     page  = 1
-
     while True:
         url = (f"https://www.fshare.vn/api/v3/files/folder"
                f"?linkcode={folder_id}&page={page}&per-page=50&sort=type,name")
@@ -91,9 +83,7 @@ def fshare_get_folder(folder_id):
                     "url":  "https://www.fshare.vn/file/" + item["linkcode"],
                 })
             else:
-                # Subfolder — đệ quy
-                sub = fshare_get_folder(item["linkcode"])
-                links.extend(sub)
+                links.extend(fshare_get_folder(item["linkcode"]))
 
         last_link = data.get("_links", {}).get("last", "")
         m         = re.search(r"page=(\d+)", last_link)
@@ -101,7 +91,6 @@ def fshare_get_folder(folder_id):
         if page >= last_page:
             break
         page += 1
-
     return links
 
 # ── DS API ────────────────────────────────────────────────────────────────────
@@ -130,6 +119,14 @@ def ds_add_task(url):
                f"&uri={urllib.parse.quote(url)}&_sid={ds_sid}")
     resp = urllib.request.urlopen(api_url, timeout=10)
     data = json.loads(resp.read())
+    if not data.get("success") and data.get("error", {}).get("code") == 105:
+        # Session hết hạn, login lại
+        if ds_login():
+            api_url = (f"{DS_HOST}/webapi/DownloadStation/task.cgi"
+                       f"?api=SYNO.DownloadStation.Task&version=1&method=create"
+                       f"&uri={urllib.parse.quote(url)}&_sid={ds_sid}")
+            resp = urllib.request.urlopen(api_url, timeout=10)
+            data = json.loads(resp.read())
     return data.get("success", False)
 
 def ds_get_tasks():
@@ -140,94 +137,33 @@ def ds_get_tasks():
     api_url = (f"{DS_HOST}/webapi/DownloadStation/task.cgi"
                f"?api=SYNO.DownloadStation.Task&version=1&method=list"
                f"&additional=transfer&_sid={ds_sid}")
-    resp  = urllib.request.urlopen(api_url, timeout=10)
-    data  = json.loads(resp.read())
+    resp = urllib.request.urlopen(api_url, timeout=10)
+    data = json.loads(resp.read())
     if data.get("success"):
         return data["data"]["tasks"]
     return []
+
+# ── Menu chính ────────────────────────────────────────────────────────────────
+
+def main_menu():
+    keyboard = [
+        [InlineKeyboardButton("Them link tai", callback_data="menu_add")],
+        [InlineKeyboardButton("Trang thai tai", callback_data="menu_status")],
+        [InlineKeyboardButton("File da xong", callback_data="menu_done")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
+        await update.message.reply_text("Ban khong co quyen su dung bot nay.")
         return
     await update.message.reply_text(
-        "👋 Fshare Bot sẵn sàng!\n\n"
-        "Gửi link folder Fshare để bắt đầu:\n"
-        "`https://www.fshare.vn/folder/XXXXXX`\n\n"
-        "Các lệnh:\n"
-        "/status — Xem task đang tải\n"
-        "/done — Xem file đã tải xong",
-        parse_mode="Markdown"
+        "*Fshare Bot*\n\nChọn chức năng bên dưới hoặc gửi link folder/file Fshare trực tiếp.",
+        parse_mode="Markdown",
+        reply_markup=main_menu()
     )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update):
-        return
-
-    text    = update.message.text.strip()
-    chat_id = update.effective_chat.id
-
-    # Nhận link folder
-    m = re.search(r"fshare\.vn/folder/(\w+)", text)
-    if m:
-        folder_id = m.group(1)
-        await update.message.reply_text("⏳ Đang lấy danh sách file...")
-
-        try:
-            links = fshare_get_folder(folder_id)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Lỗi: {e}")
-            return
-
-        if not links:
-            await update.message.reply_text("❌ Không tìm thấy file nào trong folder.")
-            return
-
-        # Lưu vào session
-        user_sessions[chat_id] = {"links": links}
-
-        # Hiện danh sách
-        text_list = "📁 Danh sách file:\n\n"
-        for i, item in enumerate(links, 1):
-            text_list += f"`{i}.` {item['name']} — {item['size']}\n"
-
-        # Nếu quá dài thì chia nhỏ
-        if len(text_list) > 4000:
-            text_list = text_list[:4000] + "\n...(còn nữa)"
-
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Tải tất cả", callback_data="dl_all"),
-                InlineKeyboardButton("📋 Tải theo mục", callback_data="dl_select"),
-            ],
-            [InlineKeyboardButton("❌ Huỷ", callback_data="dl_cancel")],
-        ]
-        await update.message.reply_text(
-            text_list,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
-
-    # Nhận số thứ tự để tải theo mục
-    if chat_id in user_sessions and user_sessions[chat_id].get("waiting_select"):
-        try:
-            indices = [int(x.strip()) - 1 for x in re.split(r"[,\s]+", text) if x.strip().isdigit()]
-            links   = user_sessions[chat_id]["links"]
-            selected = [links[i] for i in indices if 0 <= i < len(links)]
-
-            if not selected:
-                await update.message.reply_text("❌ Không có file nào hợp lệ.")
-                return
-
-            user_sessions[chat_id]["waiting_select"] = False
-            await _download_files(update, selected)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Lỗi: {e}")
-        return
-
-    await update.message.reply_text("Gửi link folder Fshare để bắt đầu.")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
@@ -237,10 +173,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await query.answer()
 
-    if query.data == "dl_all":
+    # ── Menu chính ────────────────────────────────────────────────────────────
+    if query.data == "menu_add":
+        await query.message.reply_text(
+            "Gửi link folder hoặc file Fshare:\n\n"
+            "`https://www.fshare.vn/folder/XXXXXX`\n"
+            "`https://www.fshare.vn/file/XXXXXX`",
+            parse_mode="Markdown"
+        )
+
+    elif query.data == "menu_status":
+        await _show_status(query.message)
+
+    elif query.data == "menu_done":
+        await _show_done(query.message)
+
+    # ── Download actions ──────────────────────────────────────────────────────
+    elif query.data == "dl_all":
         links = user_sessions.get(chat_id, {}).get("links", [])
         await query.edit_message_reply_markup(None)
-        await _download_files(update, links)
+        await _download_files(query.message, links)
 
     elif query.data == "dl_select":
         user_sessions[chat_id]["waiting_select"] = True
@@ -254,10 +206,111 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "dl_cancel":
         user_sessions.pop(chat_id, None)
         await query.edit_message_reply_markup(None)
-        await query.message.reply_text("❌ Đã huỷ.")
+        await query.message.reply_text(
+            "Da huy.",
+            reply_markup=main_menu()
+        )
 
-async def _download_files(update: Update, links: list):
-    msg = await update.effective_message.reply_text(f"⏳ Đang thêm {len(links)} file vào Download Station...")
+    # ── Back to menu ──────────────────────────────────────────────────────────
+    elif query.data == "back_menu":
+        await query.edit_message_reply_markup(None)
+        await query.message.reply_text(
+            "Chọn chức năng:",
+            reply_markup=main_menu()
+        )
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+
+    text    = update.message.text.strip()
+    chat_id = update.effective_chat.id
+
+    # ── Link folder ───────────────────────────────────────────────────────────
+    m = re.search(r"fshare\.vn/folder/(\w+)", text)
+    if m:
+        folder_id = m.group(1)
+        msg = await update.message.reply_text("Dang lay danh sach file...")
+
+        try:
+            links = fshare_get_folder(folder_id)
+        except Exception as e:
+            await msg.edit_text(f"Loi: {e}")
+            return
+
+        if not links:
+            await msg.edit_text(
+                "Khong tim thay file nao.",
+                reply_markup=main_menu()
+            )
+            return
+
+        user_sessions[chat_id] = {"links": links}
+
+        text_list = f"*Tim thay {len(links)} file:*\n\n"
+        for i, item in enumerate(links, 1):
+            text_list += f"`{i}.` {item['name']} — _{item['size']}_\n"
+
+        if len(text_list) > 4000:
+            text_list = text_list[:4000] + "\n_...(còn nữa)_"
+
+        keyboard = [
+            [
+                InlineKeyboardButton("Tai tat ca", callback_data="dl_all"),
+                InlineKeyboardButton("Tai theo muc", callback_data="dl_select"),
+            ],
+            [InlineKeyboardButton("Huy", callback_data="dl_cancel")],
+        ]
+        await msg.edit_text(
+            text_list,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    # ── Link file đơn ─────────────────────────────────────────────────────────
+    m = re.search(r"fshare\.vn/file/(\w+)", text)
+    if m:
+        url = f"https://www.fshare.vn/file/{m.group(1)}"
+        msg = await update.message.reply_text("Dang them vao Download Station...")
+        if ds_add_task(url):
+            await msg.edit_text(
+                "Da them vao Download Station!",
+                reply_markup=main_menu()
+            )
+        else:
+            await msg.edit_text(
+                "Them vao DS that bai.",
+                reply_markup=main_menu()
+            )
+        return
+
+    # ── Chọn theo mục ─────────────────────────────────────────────────────────
+    if chat_id in user_sessions and user_sessions[chat_id].get("waiting_select"):
+        try:
+            indices  = [int(x.strip()) - 1 for x in re.split(r"[,\s]+", text) if x.strip().isdigit()]
+            links    = user_sessions[chat_id]["links"]
+            selected = [links[i] for i in indices if 0 <= i < len(links)]
+
+            if not selected:
+                await update.message.reply_text("Khong co file nao hop le.")
+                return
+
+            user_sessions[chat_id]["waiting_select"] = False
+            await _download_files(update.message, selected)
+        except Exception as e:
+            await update.message.reply_text(f"Loi: {e}")
+        return
+
+    await update.message.reply_text(
+        "Gửi link folder hoặc file Fshare để bắt đầu.",
+        reply_markup=main_menu()
+    )
+
+# ── Download helper ───────────────────────────────────────────────────────────
+
+async def _download_files(message, links: list):
+    msg = await message.reply_text(f"Dang them {len(links)} file vào Download Station...")
 
     success = 0
     failed  = 0
@@ -267,55 +320,73 @@ async def _download_files(update: Update, links: list):
         else:
             failed += 1
 
-    result = f"✅ Đã thêm {success} file vào Download Station."
+    result = f"Da them *{success}* file vào Download Station."
     if failed:
-        result += f"\n❌ {failed} file thất bại."
+        result += f"\nLoi: *{failed}* file thất bại."
 
-    await msg.edit_text(result)
+    await msg.edit_text(
+        result,
+        parse_mode="Markdown",
+        reply_markup=main_menu()
+    )
+
+# ── Status helpers ────────────────────────────────────────────────────────────
+
+async def _show_status(message):
+    tasks = ds_get_tasks()
+    downloading = [t for t in tasks if t["status"] == "downloading"]
+
+    if not downloading:
+        await message.reply_text(
+            "Khong co file nao dang tai.",
+            reply_markup=main_menu()
+        )
+        return
+
+    text = f"*Dang tai ({len(downloading)} file):*\n\n"
+    for t in downloading:
+        speed = t.get("additional", {}).get("transfer", {}).get("speed_download", 0)
+        size  = t.get("size", 0)
+        dl    = t.get("additional", {}).get("transfer", {}).get("size_downloaded", 0)
+        pct   = f" ({int(dl/size*100)}%)" if size and size > 0 else ""
+        text += f"• _{t['title']}{pct}_ — {format_size(speed)}/s\n"
+
+    await message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=main_menu()
+    )
+
+async def _show_done(message):
+    tasks    = ds_get_tasks()
+    finished = [t for t in tasks if t["status"] == "finished"]
+
+    if not finished:
+        await message.reply_text(
+            "Chua co file nao hoan tat.",
+            reply_markup=main_menu()
+        )
+        return
+
+    text = f"*Da tai xong ({len(finished)} file):*\n\n"
+    for t in finished:
+        text += f"• _{t['title']}_ — {format_size(t.get('size', 0))}\n"
+
+    await message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=main_menu()
+    )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
-
-    tasks = ds_get_tasks()
-    if not tasks:
-        await update.message.reply_text("📭 Không có task nào đang chạy.")
-        return
-
-    downloading = [t for t in tasks if t["status"] == "downloading"]
-    if not downloading:
-        await update.message.reply_text("📭 Không có file nào đang tải.")
-        return
-
-    text = "📥 Đang tải:\n\n"
-    for t in downloading:
-        speed    = t.get("additional", {}).get("transfer", {}).get("speed_download", 0)
-        progress = ""
-        size     = t.get("size", 0)
-        dl       = t.get("additional", {}).get("transfer", {}).get("size_downloaded", 0)
-        if size and size > 0:
-            pct     = int(dl / size * 100)
-            progress = f" ({pct}%)"
-        text += f"• {t['title']}{progress} — {format_size(speed)}/s\n"
-
-    await update.message.reply_text(text)
+    await _show_status(update.message)
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
-
-    tasks = ds_get_tasks()
-    finished = [t for t in tasks if t["status"] == "finished"]
-
-    if not finished:
-        await update.message.reply_text("📭 Chưa có file nào hoàn tất.")
-        return
-
-    text = "✅ Đã tải xong:\n\n"
-    for t in finished:
-        text += f"• {t['title']} — {format_size(t.get('size', 0))}\n"
-
-    await update.message.reply_text(text)
+    await _show_done(update.message)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -328,7 +399,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Bot đang chạy...")
+    logger.info("Fshare Bot dang chay...")
     app.run_polling()
 
 if __name__ == "__main__":
