@@ -10,7 +10,7 @@ import os
 import re
 import urllib.request
 import urllib.parse
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, MenuButtonCommands, BotCommand
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
@@ -153,6 +153,13 @@ def main_menu():
     ]
     return InlineKeyboardMarkup(keyboard)
 
+def reply_keyboard():
+    keyboard = [
+        [KeyboardButton("Them link tai"), KeyboardButton("Trang thai tai")],
+        [KeyboardButton("File da xong")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, persistent=True)
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -225,6 +232,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text    = update.message.text.strip()
     chat_id = update.effective_chat.id
+
+    # ── Reply keyboard actions ───────────────────────────────────────────────
+    if text == "Them link tai":
+        await update.message.reply_text(
+            "Gui link folder hoac file Fshare:\n\n"
+            "`https://www.fshare.vn/folder/XXXXXX`\n"
+            "`https://www.fshare.vn/file/XXXXXX`",
+            parse_mode="Markdown"
+        )
+        return
+
+    if text == "Trang thai tai":
+        await _show_status(update.message)
+        return
+
+    if text == "File da xong":
+        await _show_done(update.message)
+        return
 
     # ── Link folder ───────────────────────────────────────────────────────────
     m = re.search(r"fshare\.vn/folder/(\w+)", text)
@@ -390,8 +415,16 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+async def post_init(application):
+    await application.bot.set_my_commands([
+        BotCommand("start",  "Khoi dong bot"),
+        BotCommand("status", "Xem task dang tai"),
+        BotCommand("done",   "Xem file da tai xong"),
+    ])
+    await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
