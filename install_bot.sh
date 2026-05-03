@@ -171,16 +171,19 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo -e "${YELLOW}  →${NC} Lưu cấu hình..."
-cat > "$CONFIG_FILE" << CONF
-{
-    "BOT_TOKEN":  "$BOT_TOKEN",
-    "ALLOWED_ID": $ALLOWED_ID,
-    "DS_HOST":    "$DS_HOST",
-    "DS_USER":    "$DS_USER",
-    "DS_PASS":    "$DS_PASS"
+echo -e "${YELLOW}  →${NC} Lưu cấu hình (mã hoá base64)..."
+python3 -c "
+import json, base64, sys
+enc = lambda s: base64.b64encode(s.encode()).decode()
+config = {
+    'BOT_TOKEN':  enc(sys.argv[1]),
+    'ALLOWED_ID': enc(sys.argv[2]),
+    'DS_HOST':    enc(sys.argv[3]),
+    'DS_USER':    enc(sys.argv[4]),
+    'DS_PASS':    enc(sys.argv[5]),
 }
-CONF
+json.dump(config, open(sys.argv[6], 'w'), indent=4)
+" "$BOT_TOKEN" "$ALLOWED_ID" "$DS_HOST" "$DS_USER" "$DS_PASS" "$CONFIG_FILE"
 chmod 600 "$CONFIG_FILE"
 
 echo -e "${YELLOW}  →${NC} Tạo systemd service..."
