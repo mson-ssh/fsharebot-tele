@@ -42,15 +42,36 @@ fi
 echo -e "  ${BOLD}Chọn thao tác:${NC}"
 echo ""
 echo -e "  ${CYAN}1.${NC} Cài đặt bot mới"
-echo -e "  ${CYAN}2.${NC} Cập nhật bot"
+echo -e "  ${CYAN}2.${NC} Kiểm tra trạng thái bot"
 echo -e "  ${CYAN}3.${NC} Gỡ cài đặt bot"
 echo -e "  ${CYAN}4.${NC} Huỷ"
+echo ""
+echo -e "  ${BOLD}Lưu ý:${NC} Thông tin của bạn được mã hoá 100%,"
+echo -e "  được lưu trên local và của riêng bạn."
 echo ""
 
 while true; do
     read -p "  Nhập lựa chọn [1/2/3/4]: " CHOICE
     case "$CHOICE" in
-        1|2) break ;;
+        1) break ;;
+        2)
+            echo ""
+            if systemctl is-active --quiet fshare-bot; then
+                echo -e "${GREEN}  [OK] Bot đang chạy bình thường.${NC}"
+            else
+                echo -e "${RED}  [WARN] Bot không chạy.${NC}"
+                echo -e "  Kiểm tra log: journalctl -u fshare-bot -n 20 --no-pager"
+            fi
+            echo ""
+            if [ -f "$CONFIG_FILE" ]; then
+                echo -e "  Cấu hình    : Đã lưu và mã hoá"
+            else
+                echo -e "  Cấu hình    : Chưa có"
+            fi
+            echo -e "  Phiên bản   : $(python3 -c "import telegram; print(telegram.__version__)" 2>/dev/null || echo "N/A")"
+            echo ""
+            exit 0
+            ;;
         3)
             echo ""
             read -p "  Xác nhận gỡ cài đặt? [y/N]: " CONFIRM
@@ -107,8 +128,11 @@ done
 
 # DS credentials
 echo ""
-read -p "  Tài khoản DSM (mặc định: admin): " DS_USER
-DS_USER="${DS_USER:-admin}"
+while true; do
+    read -p "  Tài khoản DSM: " DS_USER
+    if [ -n "$DS_USER" ]; then break; fi
+    echo -e "${RED}  ✗ Tài khoản DSM không được để trống.${NC}"
+done
 
 while true; do
     read -s -p "  Mật khẩu DSM: " DS_PASS
@@ -119,8 +143,12 @@ done
 
 # DS Port
 echo ""
-read -p "  Port DS (mặc định: 2026): " DS_PORT
-DS_PORT="${DS_PORT:-2026}"
+while true; do
+    read -p "  Port DS: " DS_PORT
+    if [ -n "$DS_PORT" ]; then break; fi
+    echo -e "${RED}  ✗ Port DS không được để trống.${NC}"
+done
+
 DS_HOST="http://localhost:$DS_PORT"
 
 echo ""
@@ -130,7 +158,7 @@ echo -e "${YELLOW}  →${NC} Tạo thư mục bot..."
 mkdir -p "$BOT_DIR"
 
 echo -e "${YELLOW}  →${NC} Cài thư viện python-telegram-bot..."
-pip3 install python-telegram-bot --break-system-packages -q
+pip3 install "python-telegram-bot[job-queue]" --break-system-packages
 if [ $? -ne 0 ]; then
     echo -e "${RED}  ✗ Cài thư viện thất bại.${NC}"
     exit 1
@@ -199,4 +227,7 @@ echo -e "  ${CYAN}/status${NC} — Task dang tai"
 echo -e "  ${CYAN}/done${NC}   — File da xong"
 echo ""
 echo -e "  ${BOLD}Enjoy! <3${NC}"
+echo ""
+echo -e "  ${BOLD}Kiểm tra file cấu hình đã mã hoá:${NC}"
+echo -e "  ${CYAN}cat $CONFIG_FILE${NC}"
 echo ""
