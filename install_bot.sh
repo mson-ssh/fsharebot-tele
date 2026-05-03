@@ -42,8 +42,8 @@ fi
 echo -e "  ${BOLD}Chọn thao tác:${NC}"
 echo ""
 echo -e "  ${CYAN}1.${NC} Cài đặt bot mới"
-echo -e "  ${CYAN}2.${NC} Cập nhật (gỡ toàn bộ và cài mới từ install.sh, giữ nguyên thông tin đăng nhập)"
-echo -e "  ${CYAN}3.${NC} Gỡ bot Fshare"
+echo -e "  ${CYAN}2.${NC} Kiểm tra trạng thái bot"
+echo -e "  ${CYAN}3.${NC} Gỡ cài đặt bot"
 echo -e "  ${CYAN}4.${NC} Huỷ"
 echo ""
 echo -e "  ${BOLD}Lưu ý:${NC} Thông tin của bạn được mã hoá 100%,"
@@ -55,69 +55,22 @@ while true; do
     case "$CHOICE" in
         1) break ;;
         2)
-            if [ ! -f "$CONFIG_FILE" ]; then
-                echo -e "${RED}  ✗ Không tìm thấy thông tin cũ. Vui lòng chọn 1 để cài mới.${NC}"
+            echo ""
+            if systemctl is-active --quiet fshare-bot; then
+                echo -e "${GREEN}  [OK] Bot đang chạy bình thường.${NC}"
             else
-                echo ""
-                echo -e "${YELLOW}  →${NC} Doc config cu..."
-                BOT_TOKEN=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d['BOT_TOKEN'])")
-                ALLOWED_ID=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d['ALLOWED_ID'])")
-                DS_USER=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d['DS_USER'])")
-                DS_PASS=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d['DS_PASS'])")
-                DS_HOST=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d['DS_HOST'])")
-                DS_PORT=$(echo "$DS_HOST" | grep -oE '[0-9]+$')
-
-                echo -e "${YELLOW}  →${NC} Dung service cu..."
-                systemctl stop fshare-bot 2>/dev/null
-
-                echo -e "${YELLOW}  →${NC} Xoa thu muc plugin cu..."
-                rm -rf "$BOT_DIR"
-                mkdir -p "$BOT_DIR"
-
-                echo -e "${YELLOW}  →${NC} Tai fshare_bot.py moi nhat..."
-                curl -fsSL "$REPO/fshare_bot.py" -o "$BOT_FILE"
-                if [ $? -ne 0 ]; then
-                    echo -e "${RED}  ✗ Tai fshare_bot.py that bai.${NC}"
-                    exit 1
-                fi
-
-                echo -e "${YELLOW}  →${NC} Cap nhat thu vien..."
-                pip3 install "python-telegram-bot[job-queue]" --break-system-packages
-
-                echo -e "${YELLOW}  →${NC} Khoi phuc config (ma hoa base64)..."
-                python3 -c "
-import json, base64, sys
-enc = lambda s: base64.b64encode(s.encode()).decode()
-config = {
-    'BOT_TOKEN':  enc(sys.argv[1]),
-    'ALLOWED_ID': enc(sys.argv[2]),
-    'DS_HOST':    enc(sys.argv[3]),
-    'DS_USER':    enc(sys.argv[4]),
-    'DS_PASS':    enc(sys.argv[5]),
-}
-json.dump(config, open(sys.argv[6], 'w'), indent=4)
-" "$BOT_TOKEN" "$ALLOWED_ID" "$DS_HOST" "$DS_USER" "$DS_PASS" "$CONFIG_FILE"
-                chmod 600 "$CONFIG_FILE"
-
-                echo -e "${YELLOW}  →${NC} Khoi dong lai service..."
-                systemctl daemon-reload 2>/dev/null
-                systemctl enable fshare-bot 2>/dev/null
-                systemctl start fshare-bot 2>/dev/null
-                sleep 2
-
-                if systemctl is-active --quiet fshare-bot; then
-                    echo ""
-                    echo -e "${GREEN}--------------------------------------------${NC}"
-                    echo -e "  ${GREEN}${BOLD}[OK] Cap nhat hoan tat! Bot dang chay.${NC}"
-                    echo -e "${GREEN}--------------------------------------------${NC}"
-                    echo ""
-                    echo -e "  ${BOLD}Enjoy! <3${NC}"
-                    echo ""
-                else
-                    echo -e "${RED}  [WARN] Kiem tra log: journalctl -u fshare-bot${NC}"
-                fi
-                exit 0
+                echo -e "${RED}  [WARN] Bot không chạy.${NC}"
+                echo -e "  Kiểm tra log: journalctl -u fshare-bot -n 20 --no-pager"
             fi
+            echo ""
+            if [ -f "$CONFIG_FILE" ]; then
+                echo -e "  Cấu hình    : Đã lưu và mã hoá"
+            else
+                echo -e "  Cấu hình    : Chưa có"
+            fi
+            echo -e "  Phiên bản   : $(python3 -c "import telegram; print(telegram.__version__)" 2>/dev/null || echo "N/A")"
+            echo ""
+            exit 0
             ;;
         3)
             echo ""
@@ -175,8 +128,11 @@ done
 
 # DS credentials
 echo ""
-read -p "  Tài khoản DSM (mặc định: admin): " DS_USER
-DS_USER="${DS_USER:-admin}"
+while true; do
+    read -p "  Tài khoản DSM: " DS_USER
+    if [ -n "$DS_USER" ]; then break; fi
+    echo -e "${RED}  ✗ Tài khoản DSM không được để trống.${NC}"
+done
 
 while true; do
     read -s -p "  Mật khẩu DSM: " DS_PASS
@@ -187,8 +143,12 @@ done
 
 # DS Port
 echo ""
-read -p "  Port DS (mặc định: 2026): " DS_PORT
-DS_PORT="${DS_PORT:-2026}"
+while true; do
+    read -p "  Port DS: " DS_PORT
+    if [ -n "$DS_PORT" ]; then break; fi
+    echo -e "${RED}  ✗ Port DS không được để trống.${NC}"
+done
+
 DS_HOST="http://localhost:$DS_PORT"
 
 echo ""
@@ -267,4 +227,7 @@ echo -e "  ${CYAN}/status${NC} — Task dang tai"
 echo -e "  ${CYAN}/done${NC}   — File da xong"
 echo ""
 echo -e "  ${BOLD}Enjoy! <3${NC}"
+echo ""
+echo -e "  ${BOLD}Kiểm tra file cấu hình đã mã hoá:${NC}"
+echo -e "  ${CYAN}cat $CONFIG_FILE${NC}"
 echo ""
