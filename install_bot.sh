@@ -42,9 +42,12 @@ fi
 echo -e "  ${BOLD}Chọn thao tác:${NC}"
 echo ""
 echo -e "  ${CYAN}1.${NC} Cài đặt bot mới"
-echo -e "  ${CYAN}2.${NC} Cập nhật bot"
-echo -e "  ${CYAN}3.${NC} Gỡ cài đặt bot"
+echo -e "  ${CYAN}2.${NC} Cập nhật (gỡ toàn bộ và cài mới từ install.sh, giữ nguyên thông tin đăng nhập)"
+echo -e "  ${CYAN}3.${NC} Gỡ bot Fshare"
 echo -e "  ${CYAN}4.${NC} Huỷ"
+echo ""
+echo -e "  ${BOLD}Lưu ý:${NC} Thông tin của bạn được mã hoá 100%,"
+echo -e "  được lưu trên local và của riêng bạn."
 echo ""
 
 while true; do
@@ -53,7 +56,7 @@ while true; do
         1) break ;;
         2)
             if [ ! -f "$CONFIG_FILE" ]; then
-                echo -e "${RED}  ✗ Khong tim thay config cu. Vui long chon 1 de cai moi.${NC}"
+                echo -e "${RED}  ✗ Không tìm thấy thông tin cũ. Vui lòng chọn 1 để cài mới.${NC}"
             else
                 echo ""
                 echo -e "${YELLOW}  →${NC} Doc config cu..."
