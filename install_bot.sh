@@ -212,25 +212,24 @@ sleep 2
 
 # Kiểm tra service đã chạy chưa
 if systemctl is-active --quiet fshare-bot; then
-    STATUS="${GREEN}[OK] Dang chay${NC}"
+    STATUS="${GREEN}[OK] ĐANG CHẠY${NC}"
 else
-    STATUS="${RED}[WARN] Kiem tra log: journalctl -u fshare-bot${NC}"
+    STATUS="${RED}[WARN] Kiểm tra log: journalctl -u fshare-bot${NC}"
 fi
 
 echo ""
 echo -e "${GREEN}--------------------------------------------${NC}"
-echo -e "  ${GREEN}${BOLD}[OK] Cai dat hoan tat!${NC}"
+echo -e "  ${GREEN}${BOLD}[OK] Cài đặt hoàn tất!${NC}"
 echo -e "${GREEN}--------------------------------------------${NC}"
 echo ""
-echo -e "  ${BOLD}Trang thai bot:${NC} $(echo -e $STATUS)"
-echo ""
-echo -e "  ${BOLD}Cac lenh tren Telegram:${NC}"
-echo -e "  ${CYAN}/start${NC}  — Bat dau"
-echo -e "  ${CYAN}/status${NC} — Task dang tai"
-echo -e "  ${CYAN}/done${NC}   — File da xong"
+echo -e "  Trạng thái: $(echo -e $STATUS)"
 echo ""
 echo -e "  ${BOLD}Enjoy! <3${NC}"
 echo ""
-echo -e "  ${BOLD}Kiểm tra file cấu hình đã mã hoá:${NC}"
+echo -e "___"
+echo ""
+echo -e "  Kiểm tra file cấu hình đã mã hoá tại đây:"
+echo -e "  ${CYAN}cat $CONFIG_FILE${NC}"
+echo ""
 echo -e "  ${CYAN}cat $CONFIG_FILE${NC}"
 echo ""
