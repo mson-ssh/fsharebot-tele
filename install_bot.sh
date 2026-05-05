@@ -34,8 +34,14 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 if ! command -v pip3 &> /dev/null; then
-    echo -e "${RED}  ✗ pip3 chưa được cài đặt.${NC}"
-    exit 1
+    echo -e "${YELLOW}  →${NC} pip3 chưa có, đang cài đặt..."
+    python3 -m ensurepip --upgrade 2>/dev/null || \
+    curl -fsSL https://bootstrap.pypa.io/get-pip.py | python3
+    if ! command -v pip3 &> /dev/null; then
+        echo -e "${RED}  ✗ Không thể cài pip3. Vui lòng cài thủ công.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  [OK] pip3 đã được cài đặt.${NC}"
 fi
 
 # ── Menu ──────────────────────────────────────────────────────────────────────
