@@ -78,6 +78,7 @@ while true; do
                 systemctl stop fshare-bot 2>/dev/null
 
                 echo -e "${YELLOW}  →${NC} Tải fshare_bot.py mới nhất..."
+                rm -f "$BOT_FILE"
                 curl -fsSL "$REPO/fshare_bot.py" -o "$BOT_FILE"
                 if [ $? -ne 0 ]; then
                     echo -e "${RED}  ✗ Tải bot thất bại.${NC}"
