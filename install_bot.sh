@@ -48,7 +48,7 @@ fi
 echo -e "  ${BOLD}Chọn thao tác:${NC}"
 echo ""
 echo -e "  ${CYAN}1.${NC} Cài đặt bot mới"
-echo -e "  ${CYAN}2.${NC} Kiểm tra trạng thái bot"
+echo -e "  ${CYAN}2.${NC} Cập nhật bot (giữ nguyên thông tin đăng nhập)"
 echo -e "  ${CYAN}3.${NC} Gỡ cài đặt bot"
 echo -e "  ${CYAN}4.${NC} Debug kết nối"
 echo -e "  ${CYAN}5.${NC} Huỷ"
@@ -62,22 +62,47 @@ while true; do
     case "$CHOICE" in
         1) break ;;
         2)
-            echo ""
-            if systemctl is-active --quiet fshare-bot; then
-                echo -e "${GREEN}  [OK] Bot đang chạy bình thường.${NC}"
+            if [ ! -f "$CONFIG_FILE" ]; then
+                echo -e "${RED}  ✗ Không tìm thấy thông tin cũ. Vui lòng chọn 1 để cài mới.${NC}"
             else
-                echo -e "${RED}  [WARN] Bot không chạy.${NC}"
-                echo -e "  Kiểm tra log: journalctl -u fshare-bot -n 20 --no-pager"
+                echo ""
+                echo -e "${YELLOW}  →${NC} Đọc thông tin cũ..."
+                BOT_TOKEN=$(python3 -c "import json,base64; d=json.load(open('$CONFIG_FILE')); print(base64.b64decode(d['BOT_TOKEN']).decode())" 2>/dev/null)
+                ALLOWED_ID=$(python3 -c "import json,base64; d=json.load(open('$CONFIG_FILE')); print(base64.b64decode(d['ALLOWED_ID']).decode())" 2>/dev/null)
+                DS_USER=$(python3 -c "import json,base64; d=json.load(open('$CONFIG_FILE')); print(base64.b64decode(d['DS_USER']).decode())" 2>/dev/null)
+                DS_PASS=$(python3 -c "import json,base64; d=json.load(open('$CONFIG_FILE')); print(base64.b64decode(d['DS_PASS']).decode())" 2>/dev/null)
+                DS_HOST=$(python3 -c "import json,base64; d=json.load(open('$CONFIG_FILE')); print(base64.b64decode(d['DS_HOST']).decode())" 2>/dev/null)
+                DS_PORT=$(echo "$DS_HOST" | grep -oE '[0-9]+$')
+
+                echo -e "${YELLOW}  →${NC} Dừng service..."
+                systemctl stop fshare-bot 2>/dev/null
+
+                echo -e "${YELLOW}  →${NC} Tải fshare_bot.py mới nhất..."
+                curl -fsSL "$REPO/fshare_bot.py" -o "$BOT_FILE"
+                if [ $? -ne 0 ]; then
+                    echo -e "${RED}  ✗ Tải bot thất bại.${NC}"
+                    systemctl start fshare-bot 2>/dev/null
+                    exit 1
+                fi
+
+                echo -e "${YELLOW}  →${NC} Cập nhật thư viện..."
+                pip3 install "python-telegram-bot[job-queue]" --break-system-packages -q 2>/dev/null || pip3 install "python-telegram-bot[job-queue]" -q
+
+                echo -e "${YELLOW}  →${NC} Khởi động lại service..."
+                systemctl start fshare-bot 2>/dev/null
+                sleep 2
+
+                if systemctl is-active --quiet fshare-bot; then
+                    echo ""
+                    echo -e "${GREEN}--------------------------------------------${NC}"
+                    echo -e "  ${GREEN}${BOLD}[OK] Cập nhật hoàn tất! Bot đang chạy.${NC}"
+                    echo -e "${GREEN}--------------------------------------------${NC}"
+                    echo ""
+                else
+                    echo -e "${RED}  [WARN] Kiểm tra log: journalctl -u fshare-bot -n 20 --no-pager${NC}"
+                fi
+                exit 0
             fi
-            echo ""
-            if [ -f "$CONFIG_FILE" ]; then
-                echo -e "  Cấu hình    : Đã lưu và mã hoá"
-            else
-                echo -e "  Cấu hình    : Chưa có"
-            fi
-            echo -e "  Phiên bản   : $(python3 -c "import telegram; print(telegram.__version__)" 2>/dev/null || echo "N/A")"
-            echo ""
-            exit 0
             ;;
         3)
             echo ""
