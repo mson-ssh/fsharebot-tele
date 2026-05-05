@@ -52,6 +52,7 @@ SESSION_TTL      = 600    # 10 phút — xoá user_session không hoạt động
 DS_SESSION_TTL   = 3600   # 1 giờ — xoá download_session task bị xoá thủ công
 PREV_TASKS_LIMIT = 500    # Giới hạn tối đa entries trong prev_tasks
 BATCH_SIZE       = 200    # Số link tối đa thêm vào DS mỗi lần
+TASKS_PER_PAGE   = 5      # Số task hiển thị mỗi trang
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -379,14 +380,19 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("Đang lấy danh sách tác vụ...")
     await _show_tasks(msg)
 
-async def _show_tasks(message):
+async def _show_tasks(message, page=1):
     tasks = ds_task_list()
     if not tasks:
         await message.edit_text("Không có tác vụ nào.", reply_markup=back_kb())
         return
 
+    total_pages = max(1, (len(tasks) + TASKS_PER_PAGE - 1) // TASKS_PER_PAGE)
+    page        = max(1, min(page, total_pages))
+    start       = (page - 1) * TASKS_PER_PAGE
+    paged_tasks = tasks[start:start + TASKS_PER_PAGE]
+
     lines = []
-    for i, t in enumerate(tasks, 1):
+    for i, t in enumerate(paged_tasks, start + 1):
         status = t["status"]
         size   = int(t.get("size", 0))
         dl     = int(t.get("additional", {}).get("transfer", {}).get("size_downloaded", 0))
@@ -410,7 +416,13 @@ async def _show_tasks(message):
     if len(text) > 4000:
         text = text[:4000] + "\n...(còn nữa)"
 
-    kb = InlineKeyboardMarkup([
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton("Trang trước", callback_data=f"tasks_page_{page-1}"))
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton("Trang sau", callback_data=f"tasks_page_{page+1}"))
+
+    kb_rows = [
         [
             InlineKeyboardButton("Tạm dừng tất cả", callback_data="task_pause_all"),
             InlineKeyboardButton("Tiếp tục tất cả", callback_data="task_resume_all"),
@@ -420,7 +432,11 @@ async def _show_tasks(message):
             InlineKeyboardButton("Khởi động lại lỗi", callback_data="task_restart_error"),
         ],
         [InlineKeyboardButton("Làm mới", callback_data="refresh_tasks")],
-    ])
+    ]
+    if nav_buttons:
+        kb_rows.insert(2, nav_buttons)
+
+    kb = InlineKeyboardMarkup(kb_rows)
 
     try:
         await message.edit_text(text, reply_markup=kb)
