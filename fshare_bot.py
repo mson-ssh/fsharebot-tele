@@ -6,13 +6,14 @@ Features: add link, dashboard, task management, push notification
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
 import re
+import time as _time
 import urllib.request
 import urllib.parse
-from datetime import datetime
 
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -27,7 +28,6 @@ from telegram.ext import (
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 def load_config():
-    import base64
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         raw = json.load(f)
     decoded = {}
@@ -35,7 +35,7 @@ def load_config():
         try:
             decoded[k] = base64.b64decode(v.encode()).decode("utf-8")
         except Exception:
-            decoded[k] = v  # fallback neu chua ma hoa
+            decoded[k] = v
     return decoded
 
 _cfg       = load_config()
@@ -46,8 +46,11 @@ DS_USER    = _cfg["DS_USER"]
 DS_PASS    = _cfg["DS_PASS"]
 
 USERAGENT        = "pyLoad-B1RS5N"
-POLL_INTERVAL    = 30   # seconds — check task status
-DISK_WARN_GB     = 50   # warn when free space below this
+POLL_INTERVAL    = 30
+DISK_WARN_GB     = 50
+SESSION_TTL      = 600    # 10 phút — xoá user_session không hoạt động
+DS_SESSION_TTL   = 3600   # 1 giờ — xoá download_session task bị xoá thủ công
+PREV_TASKS_LIMIT = 500    # Giới hạn tối đa entries trong prev_tasks
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -55,10 +58,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-import time as _time
-
-SESSION_TTL = 600  # 10 phút — xoá session không hoạt động
 
 # ── State ─────────────────────────────────────────────────────────────────────
 user_sessions    = {}   # { chat_id: { links, waiting_select, created_at } }
@@ -216,8 +215,8 @@ def ds_disk_info():
                         "total": vol_total,
                     })
             return total_free, total_size, vol_details
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Không thể lấy thông tin ổ đĩa: {e}")
     return 0, 0, []
 
 # ── Fshare folder ─────────────────────────────────────────────────────────────
@@ -292,7 +291,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         await update.message.reply_text("Bạn không có quyền sử dụng bot này.")
         return
-    now = datetime.now().strftime("%H:%M")
+    now = _time.strftime("%H:%M")
     await update.message.reply_text(
         f"Xin chào! Hiện tại là {now}.\n\n"
         "*Fshare Bot* sẵn sàng phục vụ.\n\n"
@@ -395,7 +394,7 @@ async def _show_tasks(message):
 
     text = "*Danh sách tác vụ:*\n\n" + "\n\n".join(lines)
     if len(text) > 4000:
-        text = text[:4000] + "\n...(con nua)"
+        text = text[:4000] + "\n...(còn nữa)"
 
     kb = InlineKeyboardMarkup([
         [
@@ -511,7 +510,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [f"`{i}.` {item['name']} - {item['size']}" for i, item in enumerate(all_links, 1)]
         list_text = f"*Tìm thấy {len(all_links)} tệp:*\n\n" + "\n".join(lines)
         if len(list_text) > 4000:
-            list_text = list_text[:4000] + "\n...(con nua)"
+            list_text = list_text[:4000] + "\n...(còn nữa)"
 
         kb = InlineKeyboardMarkup([
             [
@@ -532,7 +531,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(status)
         else:
             links = [{"name": u.split("/")[-1], "size": "?", "url": u} for u in file_urls]
-            user_sessions[chat_id] = {"links": links}
+            user_sessions[chat_id] = {"links": links, "created_at": _time.time()}
             kb = InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(f"Tải tất cả ({len(links)} tệp)", callback_data="dl_all"),
@@ -621,8 +620,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_reply_markup(None)
         total = len(user_sessions[chat_id]["links"])
         await query.message.reply_text(
-            f"Nhap so thu tu cac file muon tai (1-{total}), cach nhau bang dau cach hoac phay.\n"
-            f"Vi du: `1 3 5` hoac `1, 3, 5`",
+            f"Nhập số thứ tự các tệp muốn tải (1-{total}), cách nhau bằng dấu cách hoặc dấu phẩy.\n"
+            f"Ví dụ: `1 3 5` hoặc `1, 3, 5`",
             parse_mode="Markdown"
         )
 
@@ -643,44 +642,40 @@ async def _do_download(message, links: list):
     # Lay danh sach task truoc khi them
     tasks_before = {t["id"] for t in ds_task_list()}
 
-    success = failed = 0
-    names   = []
+    success_items = []
+    failed = 0
     for item in links:
         if ds_add_task(item["url"]):
-            success += 1
-            names.append(item.get("name", ""))
+            success_items.append(item)
         else:
             failed += 1
 
-    lines = [f"Đã thêm *{success}* tệp vào Download Station:"]
-    for item in links[:success]:
-        lines.append(f"  - {item.get('name', '')[:40]}")
-    if failed:
-        lines.append(f"\nThất bại: *{failed}* tệp.")
-    result = "\n".join(lines)
-    if len(result) > 4000:
-        result = result[:4000] + "\n..."
+    success = len(success_items)
+    if success > 0 and failed == 0:
+        result = f"Đã thêm *{success}* tệp vào Download Station và đang tải về.\n\nKiểm tra tiến độ tại /tasks"
+    elif success > 0 and failed > 0:
+        result = f"Đã thêm *{success}* tệp vào Download Station và đang tải về.\nThất bại: *{failed}* tệp.\n\nKiểm tra tiến độ tại /tasks"
+    else:
+        result = f"Thêm tệp thất bại. Vui lòng thử lại."
     await msg.edit_text(result, parse_mode="Markdown")
 
     # Tao phien tai moi
     if success > 0:
-        tasks_after  = {t["id"] for t in ds_task_list()}
-        new_task_ids = list(tasks_after - tasks_before)
-        session_counter += 1
-        sid = session_counter
-        import time as _time
-        download_sessions[sid] = {
-            "task_ids":   new_task_ids,
-            "names":      names,
-            "chat_id":    message.chat_id,
-            "done_ids":   set(),
-            "error_ids":  set(),
-            "start_time": int(_time.time()),
-        }
-
-    await asyncio.sleep(1)
-    dash = await message.reply_text("Đang cập nhật dashboard...")
-    await _show_dashboard(dash)
+        try:
+            tasks_after  = {t["id"] for t in ds_task_list()}
+            new_task_ids = list(tasks_after - tasks_before)
+            session_counter += 1
+            sid = session_counter
+            download_sessions[sid] = {
+                "task_ids":   new_task_ids,
+                "names":      [item.get("name", "") for item in success_items],
+                "chat_id":    message.chat_id,
+                "done_ids":   set(),
+                "error_ids":  set(),
+                "start_time": int(_time.time()),
+            }
+        except Exception as e:
+            logger.error(f"Lỗi tạo phiên tải: {e}")
 
 # ── Push notification (job queue) ─────────────────────────────────────────────
 
@@ -717,8 +712,7 @@ async def check_tasks(context: ContextTypes.DEFAULT_TYPE):
                 total_size   = sum(int(t.get("size", 0)) for t in done_tasks)
 
                 # Tinh tong thoi gian tai (giay)
-                import time
-                elapsed = int(time.time()) - session.get("start_time", int(time.time()))
+                elapsed = int(_time.time()) - session.get("start_time", int(_time.time()))
                 if elapsed >= 3600:
                     elapsed_str = f"{elapsed // 3600} giờ {(elapsed % 3600) // 60} phút"
                 elif elapsed >= 60:
@@ -745,9 +739,29 @@ async def check_tasks(context: ContextTypes.DEFAULT_TYPE):
                 )
                 finished_sessions.append(sid)
 
-        # Xoa phien da hoan tat
+        # Xoá phiên đã hoàn tất
         for sid in finished_sessions:
             del download_sessions[sid]
+
+        # Xoá download_sessions quá hạn TTL (task bị xoá thủ công trên DS)
+        now = _time.time()
+        expired_dl = [
+            sid for sid, s in download_sessions.items()
+            if now - s.get("start_time", now) > DS_SESSION_TTL
+        ]
+        for sid in expired_dl:
+            del download_sessions[sid]
+            logger.info(f"Đã xoá phiên tải hết hạn: session {sid}")
+
+        # Dọn dẹp user_sessions hết hạn TTL
+        now = _time.time()
+        expired_sessions = [
+            cid for cid, s in user_sessions.items()
+            if now - s.get("created_at", now) > SESSION_TTL
+        ]
+        for cid in expired_sessions:
+            del user_sessions[cid]
+            logger.info(f"Đã xoá session hết hạn của chat_id {cid}")
 
         # Canh bao disk
         free, total, _ = ds_disk_info()
@@ -761,6 +775,12 @@ async def check_tasks(context: ContextTypes.DEFAULT_TYPE):
                 context.bot_data["disk_warned"] = True
         else:
             context.bot_data["disk_warned"] = False
+
+        # Giới hạn kích thước prev_tasks — xoá các entry cũ nhất nếu vượt giới hạn
+        if len(current) > PREV_TASKS_LIMIT:
+            excess = list(current.keys())[:-PREV_TASKS_LIMIT]
+            for k in excess:
+                del current[k]
 
         prev_tasks = current
 
