@@ -392,15 +392,22 @@ if echo "$LOGIN_CHECK" | grep -q "^OK:"; then
     # 3. Trạng thái Storage API
     STORAGE_CHECK=$(python3 -c "
 import urllib.request, json
+
+def fmt(b):
+    gb = b / 1024**3
+    if gb >= 1024:
+        return f'{gb/1024:.1f} TB'
+    return f'{gb:.1f} GB'
+
 url = '${DS_HOST}/webapi/entry.cgi?api=SYNO.Storage.CGI.Storage&version=1&method=load_info&_sid=${SID}'
 try:
     resp = urllib.request.urlopen(url, timeout=10)
     d    = json.loads(resp.read().decode())
     if d.get('success'):
         vols = d['data'].get('volumes', [])
-        info = ', '.join(
+        info = ','.join(
             (v.get('vol_desc') or v.get('id','')) + ': ' +
-            str(round((int(v['size']['total'])-int(v['size']['used']))/1024**3,1)) + ' GB còn'
+            fmt(int(v['size']['total']) - int(v['size']['used'])) + ' Free'
             for v in vols if 'size' in v
         )
         print('OK:' + info)
