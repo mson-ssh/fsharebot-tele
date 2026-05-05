@@ -528,8 +528,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(file_urls) == 1:
             msg = await update.message.reply_text("Đang thêm vào Download Station...")
             ok = ds_add_task(file_urls[0])
-            status = "Đã thêm vào Download Station." if ok else "Thêm thất bại."
-            await msg.edit_text(status)
+            if ok:
+                status = "Đã thêm *1* tệp vào Download Station và đang tải về.\n\nKiểm tra tiến độ tại /tasks"
+            else:
+                status = "Thêm tệp thất bại. Vui lòng thử lại."
+            await msg.edit_text(status, parse_mode="Markdown")
         else:
             links = [{"name": u.split("/")[-1], "size": "?", "url": u} for u in file_urls]
             user_sessions[chat_id] = {"links": links, "created_at": _time.time()}
