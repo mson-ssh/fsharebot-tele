@@ -118,7 +118,14 @@ while true; do
 
             # Kiem tra DS login
             echo -e "${YELLOW}  →${NC} Kiểm tra đăng nhập Download Station..."
-            LOGIN=$(curl -s "$DS_HOST/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$DS_USER'))")&passwd=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$DS_PASS'))")&session=DownloadStation&format=sid")
+            LOGIN=$(DS_USER="$DS_USER" DS_PASS="$DS_PASS" python3 -c "
+import urllib.request, urllib.parse, os, json
+user = urllib.parse.quote(os.environ['DS_USER'])
+passwd = urllib.parse.quote(os.environ['DS_PASS'])
+url = '${DS_HOST}/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=' + user + '&passwd=' + passwd + '&session=DownloadStation&format=sid'
+resp = urllib.request.urlopen(url, timeout=10)
+print(resp.read().decode())
+" 2>/dev/null)
             SUCCESS=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('success','false'))" 2>/dev/null)
 
             if [ "$SUCCESS" = "True" ]; then
@@ -225,9 +232,9 @@ while true; do
     # Kiem tra login DS
     echo ""
     echo -e "${YELLOW}  →${NC} Đang kiểm tra kết nối Download Station..."
-    DS_USER_ENC=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$DS_USER'))")
-    DS_PASS_ENC=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$DS_PASS'))")
-    LOGIN=$(curl -s "$DS_HOST/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=$DS_USER_ENC&passwd=$DS_PASS_ENC&session=DownloadStation&format=sid")
+    DS_USER_ENC=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DS_USER']))" 2>/dev/null)
+    DS_PASS_ENC=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DS_PASS']))" 2>/dev/null)
+    LOGIN=$(DS_USER="$DS_USER" DS_PASS="$DS_PASS" curl -s "$DS_HOST/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=$DS_USER_ENC&passwd=$DS_PASS_ENC&session=DownloadStation&format=sid")
     LOGIN_OK=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('success','false'))" 2>/dev/null)
 
     if [ "$LOGIN_OK" = "True" ]; then
@@ -257,10 +264,10 @@ echo -e "${YELLOW}  →${NC} Tạo thư mục bot..."
 mkdir -p "$BOT_DIR"
 
 echo -e "${YELLOW}  →${NC} Cập nhật pip..."
-pip3 install --upgrade pip 2>/dev/null || python3 -m pip install --upgrade pip 2>/dev/null
+pip3 install --upgrade pip -q 2>/dev/null || python3 -m pip install --upgrade pip -q 2>/dev/null
 
 echo -e "${YELLOW}  →${NC} Cài thư viện python-telegram-bot..."
-pip3 install "python-telegram-bot[job-queue]" --break-system-packages 2>/dev/null || pip3 install "python-telegram-bot[job-queue]"
+pip3 install "python-telegram-bot[job-queue]" --break-system-packages -q 2>/dev/null || pip3 install "python-telegram-bot[job-queue]" -q
 if [ $? -ne 0 ]; then
     echo -e "${RED}  ✗ Cài thư viện thất bại.${NC}"
     exit 1
