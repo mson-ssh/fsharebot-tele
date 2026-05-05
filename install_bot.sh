@@ -229,21 +229,37 @@ while true; do
 
     DS_HOST="http://localhost:$DS_PORT"
 
-    # Kiem tra login DS
+    # Kiem tra login DS bang Python thuan
     echo ""
     echo -e "${YELLOW}  →${NC} Đang kiểm tra kết nối Download Station..."
-    DS_USER_ENC=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DS_USER']))" 2>/dev/null)
-    DS_PASS_ENC=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DS_PASS']))" 2>/dev/null)
-    LOGIN=$(DS_USER="$DS_USER" DS_PASS="$DS_PASS" curl -s "$DS_HOST/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=$DS_USER_ENC&passwd=$DS_PASS_ENC&session=DownloadStation&format=sid")
-    LOGIN_OK=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('success','false'))" 2>/dev/null)
+    LOGIN=$(python3 - << PYEOF
+import urllib.request, urllib.parse, json, sys
+
+user   = "$DS_USER"
+passwd = "$DS_PASS"
+host   = "$DS_HOST"
+
+url = (host + "/webapi/auth.cgi"
+       "?api=SYNO.API.Auth&version=3&method=login"
+       "&account=" + urllib.parse.quote(user, safe='')
+       + "&passwd=" + urllib.parse.quote(passwd, safe='')
+       + "&session=DownloadStation&format=sid")
+try:
+    resp = urllib.request.urlopen(url, timeout=10)
+    print(resp.read().decode())
+except Exception as e:
+    print(json.dumps({"success": False, "error": {"code": 0}, "msg": str(e)}))
+PYEOF
+)
+    LOGIN_OK=$(echo "$LOGIN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('success','false'))" 2>/dev/null)
 
     if [ "$LOGIN_OK" = "True" ]; then
         echo -e "${GREEN}  [OK] Kết nối thành công!${NC}"
         break
     else
-        ERR_CODE=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',{}).get('code',''))" 2>/dev/null)
+        ERR_CODE=$(echo "$LOGIN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',{}).get('code',''))" 2>/dev/null)
         if [ "$ERR_CODE" = "403" ]; then
-            ERRORS=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print('2FA' if 'token' in str(d.get('error',{})) else 'Sai thông tin')" 2>/dev/null)
+            ERRORS=$(echo "$LOGIN" | python3 -c "import sys,json; d=json.load(sys.stdin); print('2FA' if 'token' in str(d.get('error',{})) else 'Sai thông tin')" 2>/dev/null)
             if [ "$ERRORS" = "2FA" ]; then
                 echo -e "${RED}  ✗ Tài khoản đang bật xác thực 2 lớp (2FA).${NC}"
                 echo -e "  Vui lòng tắt 2FA hoặc dùng tài khoản khác không có 2FA."
