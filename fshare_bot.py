@@ -543,13 +543,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Xu ly folder
     if folder_ids:
-        msg = await update.message.reply_text("Đang lấy danh sách tệp...")
+        msg = await update.message.reply_text(
+            "Đang lấy danh sách tệp...\n"
+            "Gõ /cancel để huỷ."
+        )
         all_links = []
         for fid in folder_ids:
+            # Kiểm tra huỷ trước mỗi folder
+            if cancel_flag.get(chat_id):
+                cancel_flag.pop(chat_id, None)
+                await msg.edit_text("Đã huỷ lấy danh sách tệp.")
+                return
             try:
-                all_links.extend(fshare_get_folder(fid))
+                # Chạy trong thread riêng — không block bot
+                links = await asyncio.to_thread(fshare_get_folder, fid)
+                all_links.extend(links)
             except Exception as e:
                 await update.message.reply_text(f"Lỗi thư mục {fid}: {e}")
+
+        # Kiểm tra huỷ sau khi lấy xong
+        if cancel_flag.get(chat_id):
+            cancel_flag.pop(chat_id, None)
+            await msg.edit_text("Đã huỷ lấy danh sách tệp.")
+            return
 
         if not all_links and not file_urls:
             await msg.edit_text("Không tìm thấy tệp nào.")
