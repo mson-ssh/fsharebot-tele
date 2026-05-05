@@ -67,6 +67,7 @@ ds_sid           = None
 prev_tasks       = {}   # { task_id: status }
 download_sessions = {}  # { session_id: { task_ids, names, chat_id, done_ids, error_ids } }
 session_counter   = 0
+cancel_flag       = {}  # { chat_id: True } — đánh dấu yêu cầu huỷ
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -443,6 +444,31 @@ async def _show_tasks(message, page=1):
     except Exception:
         await message.reply_text(text, reply_markup=kb)
 
+# ── /cancel ───────────────────────────────────────────────────────────────────
+
+async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+    chat_id = update.effective_chat.id
+    cancelled = []
+
+    # Huỷ session đang chờ chọn file
+    if chat_id in user_sessions:
+        user_sessions.pop(chat_id, None)
+        cancelled.append("phiên chọn tệp")
+
+    # Đánh dấu huỷ batch đang thêm vào DS
+    cancel_flag[chat_id] = True
+    cancelled.append("tiến trình thêm link")
+
+    if cancelled:
+        await update.message.reply_text(
+            f"Đã huỷ: {', '.join(cancelled)}.\n"
+            "Các tệp đang tải trên Download Station vẫn tiếp tục."
+        )
+    else:
+        await update.message.reply_text("Không có tiến trình nào đang chạy.")
+
 # ── /add ──────────────────────────────────────────────────────────────────────
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -670,6 +696,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _do_download(message, links: list):
     global session_counter
+    chat_id = message.chat_id
+
+    # Xoá flag huỷ cũ khi bắt đầu phiên mới
+    cancel_flag.pop(chat_id, None)
 
     total_links   = len(links)
     total_success = 0
@@ -692,6 +722,15 @@ async def _do_download(message, links: list):
         )
 
     for batch_idx, batch in enumerate(batches, 1):
+        # Kiểm tra huỷ trước mỗi batch
+        if cancel_flag.get(chat_id):
+            cancel_flag.pop(chat_id, None)
+            await msg.edit_text(
+                f"Đã huỷ. Đã thêm *{total_success}* tệp trước khi huỷ.\n\nKiểm tra tiến độ tại /tasks",
+                parse_mode="Markdown"
+            )
+            return
+
         if total_batches > 1:
             await msg.edit_text(
                 f"Đang thêm đợt *{batch_idx}/{total_batches}* "
@@ -870,6 +909,7 @@ async def post_init(app):
         BotCommand("tasks",  "Quản lý tác vụ"),
         BotCommand("done",   "Tệp đã hoàn tất"),
         BotCommand("clear",  "Xoá tác vụ đã xong"),
+        BotCommand("cancel", "Huỷ tiến trình đang thực thi"),
     ])
     await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     logger.info("Bot đã khởi tạo thành công.")
@@ -882,12 +922,13 @@ def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("info",  cmd_info))
-    app.add_handler(CommandHandler("tasks", cmd_tasks))
-    app.add_handler(CommandHandler("add",   cmd_add))
-    app.add_handler(CommandHandler("clear", cmd_clear))
-    app.add_handler(CommandHandler("done",  cmd_done))
+    app.add_handler(CommandHandler("start",  cmd_start))
+    app.add_handler(CommandHandler("info",   cmd_info))
+    app.add_handler(CommandHandler("tasks",  cmd_tasks))
+    app.add_handler(CommandHandler("add",    cmd_add))
+    app.add_handler(CommandHandler("clear",  cmd_clear))
+    app.add_handler(CommandHandler("done",   cmd_done))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
