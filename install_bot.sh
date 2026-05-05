@@ -199,27 +199,56 @@ done
 # DS credentials
 echo ""
 while true; do
-    read -p "  Tài khoản DSM: " DS_USER
-    if [ -n "$DS_USER" ]; then break; fi
-    echo -e "${RED}  ✗ Tài khoản DSM không được để trống.${NC}"
-done
+    while true; do
+        read -p "  Tài khoản DSM: " DS_USER
+        if [ -n "$DS_USER" ]; then break; fi
+        echo -e "${RED}  ✗ Tài khoản DSM không được để trống.${NC}"
+    done
 
-while true; do
-    read -s -p "  Mật khẩu DSM: " DS_PASS
+    while true; do
+        read -s -p "  Mật khẩu DSM: " DS_PASS
+        echo ""
+        if [ -n "$DS_PASS" ]; then break; fi
+        echo -e "${RED}  ✗ Mật khẩu không được để trống.${NC}"
+    done
+
+    # DS Port
     echo ""
-    if [ -n "$DS_PASS" ]; then break; fi
-    echo -e "${RED}  ✗ Mật khẩu không được để trống.${NC}"
-done
+    while true; do
+        read -p "  Port DS: " DS_PORT
+        if [ -n "$DS_PORT" ]; then break; fi
+        echo -e "${RED}  ✗ Port DS không được để trống.${NC}"
+    done
 
-# DS Port
-echo ""
-while true; do
-    read -p "  Port DS: " DS_PORT
-    if [ -n "$DS_PORT" ]; then break; fi
-    echo -e "${RED}  ✗ Port DS không được để trống.${NC}"
-done
+    DS_HOST="http://localhost:$DS_PORT"
 
-DS_HOST="http://localhost:$DS_PORT"
+    # Kiem tra login DS
+    echo ""
+    echo -e "${YELLOW}  →${NC} Đang kiểm tra kết nối Download Station..."
+    DS_USER_ENC=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$DS_USER'))")
+    DS_PASS_ENC=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$DS_PASS'))")
+    LOGIN=$(curl -s "$DS_HOST/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=$DS_USER_ENC&passwd=$DS_PASS_ENC&session=DownloadStation&format=sid")
+    LOGIN_OK=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('success','false'))" 2>/dev/null)
+
+    if [ "$LOGIN_OK" = "True" ]; then
+        echo -e "${GREEN}  [OK] Kết nối thành công!${NC}"
+        break
+    else
+        ERR_CODE=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',{}).get('code',''))" 2>/dev/null)
+        if [ "$ERR_CODE" = "403" ]; then
+            ERRORS=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print('2FA' if 'token' in str(d.get('error',{})) else 'Sai thông tin')" 2>/dev/null)
+            if [ "$ERRORS" = "2FA" ]; then
+                echo -e "${RED}  ✗ Tài khoản đang bật xác thực 2 lớp (2FA).${NC}"
+                echo -e "  Vui lòng tắt 2FA hoặc dùng tài khoản khác không có 2FA."
+            else
+                echo -e "${RED}  ✗ Sai tài khoản hoặc mật khẩu. Vui lòng nhập lại.${NC}"
+            fi
+        else
+            echo -e "${RED}  ✗ Kết nối thất bại (mã lỗi: $ERR_CODE). Vui lòng kiểm tra Port DS.${NC}"
+        fi
+        echo ""
+    fi
+done
 
 echo ""
 
