@@ -239,13 +239,16 @@ def ds_disk_info():
 
 MAX_FOLDER_DEPTH = 10  # Giới hạn độ sâu tối đa khi duyệt thư mục
 
-def fshare_get_folder(root_folder_id):
+def fshare_get_folder(root_folder_id, chat_id=None):
     """Lấy danh sách file bằng iterative DFS — tránh đệ quy vô tận."""
     links  = []
-    # Stack chứa (folder_id, depth)
     stack  = [(root_folder_id, 0)]
 
     while stack:
+        # Kiểm tra huỷ giữa các folder
+        if chat_id and cancel_flag.get(chat_id):
+            break
+
         folder_id, depth = stack.pop()
 
         if depth >= MAX_FOLDER_DEPTH:
@@ -254,6 +257,10 @@ def fshare_get_folder(root_folder_id):
 
         page = 1
         while True:
+            # Kiểm tra huỷ giữa các trang
+            if chat_id and cancel_flag.get(chat_id):
+                return links
+
             url = (f"https://www.fshare.vn/api/v3/files/folder"
                    f"?linkcode={folder_id}&page={page}&per-page=50&sort=type,name")
             req  = urllib.request.Request(url, headers={"User-Agent": USERAGENT})
@@ -266,14 +273,12 @@ def fshare_get_folder(root_folder_id):
 
             for item in items:
                 if item["type"] == 1:
-                    # File
                     links.append({
                         "name": item.get("realname") or item.get("name", ""),
                         "size": format_size(item.get("size", 0)),
                         "url":  "https://www.fshare.vn/file/" + item["linkcode"],
                     })
                 else:
-                    # Subfolder — đưa vào stack thay vì đệ quy
                     stack.append((item["linkcode"], depth + 1))
 
             last_link = data.get("_links", {}).get("last", "")
@@ -386,6 +391,10 @@ async def _show_tasks(message, page=1):
     if not tasks:
         await message.edit_text("Không có tác vụ nào.", reply_markup=back_kb())
         return
+
+    # Sắp xếp: đang tải → tạm dừng → lỗi → hoàn tất
+    status_order = {"downloading": 0, "paused": 1, "error": 2, "finished": 3}
+    tasks = sorted(tasks, key=lambda t: status_order.get(t["status"], 9))
 
     total_pages = max(1, (len(tasks) + TASKS_PER_PAGE - 1) // TASKS_PER_PAGE)
     page        = max(1, min(page, total_pages))
@@ -557,7 +566,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 # Chạy trong thread riêng — tương thích Python 3.8+
                 loop  = asyncio.get_event_loop()
-                links = await loop.run_in_executor(None, fshare_get_folder, fid)
+                links = await loop.run_in_executor(None, fshare_get_folder, fid, chat_id)
                 all_links.extend(links)
             except Exception as e:
                 await update.message.reply_text(f"Lỗi thư mục {fid}: {e}")
