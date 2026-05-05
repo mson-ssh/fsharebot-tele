@@ -321,15 +321,19 @@ echo -e "${YELLOW}  →${NC} Tạo systemd service..."
 cat > "$SERVICE_FILE" << SERVICE
 [Unit]
 Description=Fshare Telegram Bot
-After=network.target
+After=network.target pkgctl-DownloadStation.service
+Wants=pkgctl-DownloadStation.service
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=$BOT_DIR
+ExecStartPre=/bin/sh -c 'until curl -sf http://localhost:$DS_PORT/webapi/query.cgi?api=SYNO.API.Info > /dev/null 2>&1; do sleep 3; done'
 ExecStart=/usr/bin/python3 $BOT_FILE
 Restart=always
-RestartSec=5
+RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Install]
 WantedBy=multi-user.target
@@ -339,13 +343,98 @@ echo -e "${YELLOW}  →${NC} Khởi động service..."
 systemctl daemon-reload
 systemctl enable fshare-bot
 systemctl start fshare-bot
-sleep 2
+sleep 3
 
-# Kiểm tra service đã chạy chưa
+# ── Kiểm tra sau cài đặt ──────────────────────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}Đang kiểm tra hệ thống...${NC}"
+echo ""
+
+# 1. Trạng thái service
 if systemctl is-active --quiet fshare-bot; then
     STATUS="${GREEN}[OK] ĐANG CHẠY${NC}"
+    BOT_OK=true
 else
     STATUS="${RED}[WARN] Kiểm tra log: journalctl -u fshare-bot${NC}"
+    BOT_OK=false
+fi
+echo -e "  Bot Telegram     : $(echo -e $STATUS)"
+
+# 2. Trạng thái đăng nhập DS
+LOGIN_CHECK=$(python3 - << PYEOF
+import urllib.request, urllib.parse, json, sys
+
+user   = "$DS_USER"
+passwd = "$DS_PASS"
+host   = "$DS_HOST"
+
+url = (host + "/webapi/auth.cgi"
+       "?api=SYNO.API.Auth&version=3&method=login"
+       "&account=" + urllib.parse.quote(user, safe='')
+       + "&passwd=" + urllib.parse.quote(passwd, safe='')
+       + "&session=DownloadStation&format=sid")
+try:
+    resp = urllib.request.urlopen(url, timeout=10)
+    d    = json.loads(resp.read().decode())
+    if d.get("success"):
+        print("OK:" + d["data"]["sid"])
+    else:
+        print("FAIL:" + str(d.get("error", {}).get("code", "?")))
+except Exception as e:
+    print("FAIL:" + str(e))
+PYEOF
+)
+
+if echo "$LOGIN_CHECK" | grep -q "^OK:"; then
+    SID=$(echo "$LOGIN_CHECK" | cut -d: -f2)
+    echo -e "  Đăng nhập DS     : ${GREEN}[OK]${NC}"
+
+    # 3. Trạng thái Storage API
+    STORAGE_CHECK=$(python3 -c "
+import urllib.request, json
+url = '${DS_HOST}/webapi/entry.cgi?api=SYNO.Storage.CGI.Storage&version=1&method=load_info&_sid=${SID}'
+try:
+    resp = urllib.request.urlopen(url, timeout=10)
+    d    = json.loads(resp.read().decode())
+    if d.get('success'):
+        vols = d['data'].get('volumes', [])
+        info = ', '.join(
+            (v.get('vol_desc') or v.get('id','')) + ': ' +
+            str(round((int(v['size']['total'])-int(v['size']['used']))/1024**3,1)) + ' GB còn'
+            for v in vols if 'size' in v
+        )
+        print('OK:' + info)
+    else:
+        print('FAIL:' + str(d.get('error',{}).get('code','?')))
+except Exception as e:
+    print('FAIL:' + str(e))
+" 2>/dev/null)
+
+    if echo "$STORAGE_CHECK" | grep -q "^OK:"; then
+        STORAGE_INFO=$(echo "$STORAGE_CHECK" | cut -d: -f2-)
+        echo -e "  Storage API      : ${GREEN}[OK]${NC}"
+        echo "$STORAGE_INFO" | tr ',' '\n' | while read -r vol; do
+            echo -e "    $vol"
+        done
+    else
+        echo -e "  Storage API      : ${RED}[WARN] Không lấy được thông tin ổ đĩa${NC}"
+    fi
+else
+    ERR=$(echo "$LOGIN_CHECK" | cut -d: -f2-)
+    echo -e "  Đăng nhập DS     : ${RED}[FAIL] $ERR${NC}"
+    echo -e "  Storage API      : ${RED}[SKIP]${NC}"
+fi
+
+# 4. Trạng thái file config
+if [ -f "$CONFIG_FILE" ]; then
+    FIRST_VAL=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(list(d.values())[0])" 2>/dev/null)
+    if echo "$FIRST_VAL" | grep -qE "^[A-Za-z0-9+/]+=*$"; then
+        echo -e "  File cấu hình    : ${GREEN}[OK] Đã mã hoá${NC}"
+    else
+        echo -e "  File cấu hình    : ${RED}[WARN] Chưa mã hoá${NC}"
+    fi
+else
+    echo -e "  File cấu hình    : ${RED}[FAIL] Không tìm thấy${NC}"
 fi
 
 echo ""
