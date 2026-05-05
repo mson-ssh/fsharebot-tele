@@ -555,8 +555,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await msg.edit_text("Đã huỷ lấy danh sách tệp.")
                 return
             try:
-                # Chạy trong thread riêng — không block bot
-                links = await asyncio.to_thread(fshare_get_folder, fid)
+                # Chạy trong thread riêng — tương thích Python 3.8+
+                loop  = asyncio.get_event_loop()
+                links = await loop.run_in_executor(None, fshare_get_folder, fid)
                 all_links.extend(links)
             except Exception as e:
                 await update.message.reply_text(f"Lỗi thư mục {fid}: {e}")
