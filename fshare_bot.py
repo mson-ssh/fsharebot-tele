@@ -56,8 +56,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+import time as _time
+
+SESSION_TTL = 600  # 10 phút — xoá session không hoạt động
+
 # ── State ─────────────────────────────────────────────────────────────────────
-user_sessions    = {}   # { chat_id: { links, waiting_select } }
+user_sessions    = {}   # { chat_id: { links, waiting_select, created_at } }
 ds_sid           = None
 prev_tasks       = {}   # { task_id: status }
 download_sessions = {}  # { session_id: { task_ids, names, chat_id, done_ids, error_ids } }
@@ -91,7 +95,7 @@ def progress_bar(pct, width=10):
 
 # ── DS API ────────────────────────────────────────────────────────────────────
 
-def _ds_get(path, params=None):
+def _ds_get(path, params=None, _is_auth_call=False):
     global ds_sid
     if params is None:
         params = {}
@@ -104,8 +108,8 @@ def _ds_get(path, params=None):
         resp = urllib.request.urlopen(req, timeout=10)
         return json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        if e.code == 403:
-            # Re-login va thu lai
+        if e.code == 403 and not _is_auth_call:
+            # Re-login và thử lại — chỉ khi không phải đang gọi auth
             ds_sid = None
             if ds_login():
                 params["_sid"] = ds_sid
@@ -126,7 +130,7 @@ def ds_login():
         "passwd":  DS_PASS,
         "session": "DownloadStation",
         "format":  "sid",
-    })
+    }, _is_auth_call=True)  # Đánh dấu là auth call — không trigger re-login
     if data.get("success"):
         ds_sid = data["data"]["sid"]
         return True
@@ -218,36 +222,52 @@ def ds_disk_info():
 
 # ── Fshare folder ─────────────────────────────────────────────────────────────
 
-def fshare_get_folder(folder_id):
-    links = []
-    page  = 1
-    while True:
-        url = (f"https://www.fshare.vn/api/v3/files/folder"
-               f"?linkcode={folder_id}&page={page}&per-page=50&sort=type,name")
-        req  = urllib.request.Request(url, headers={"User-Agent": USERAGENT})
-        resp = urllib.request.urlopen(req, timeout=30)
-        data = json.loads(resp.read().decode("utf-8"))
+MAX_FOLDER_DEPTH = 10  # Giới hạn độ sâu tối đa khi duyệt thư mục
 
-        items = data.get("items", [])
-        if not items:
-            break
+def fshare_get_folder(root_folder_id):
+    """Lấy danh sách file bằng iterative DFS — tránh đệ quy vô tận."""
+    links  = []
+    # Stack chứa (folder_id, depth)
+    stack  = [(root_folder_id, 0)]
 
-        for item in items:
-            if item["type"] == 1:
-                links.append({
-                    "name": item.get("realname") or item.get("name", ""),
-                    "size": format_size(item.get("size", 0)),
-                    "url":  "https://www.fshare.vn/file/" + item["linkcode"],
-                })
-            else:
-                links.extend(fshare_get_folder(item["linkcode"]))
+    while stack:
+        folder_id, depth = stack.pop()
 
-        last_link = data.get("_links", {}).get("last", "")
-        m         = re.search(r"page=(\d+)", last_link)
-        last_page = int(m.group(1)) if m else 1
-        if page >= last_page:
-            break
-        page += 1
+        if depth >= MAX_FOLDER_DEPTH:
+            logger.warning(f"Bỏ qua thư mục {folder_id}: vượt độ sâu tối đa {MAX_FOLDER_DEPTH}")
+            continue
+
+        page = 1
+        while True:
+            url = (f"https://www.fshare.vn/api/v3/files/folder"
+                   f"?linkcode={folder_id}&page={page}&per-page=50&sort=type,name")
+            req  = urllib.request.Request(url, headers={"User-Agent": USERAGENT})
+            resp = urllib.request.urlopen(req, timeout=30)
+            data = json.loads(resp.read().decode("utf-8"))
+
+            items = data.get("items", [])
+            if not items:
+                break
+
+            for item in items:
+                if item["type"] == 1:
+                    # File
+                    links.append({
+                        "name": item.get("realname") or item.get("name", ""),
+                        "size": format_size(item.get("size", 0)),
+                        "url":  "https://www.fshare.vn/file/" + item["linkcode"],
+                    })
+                else:
+                    # Subfolder — đưa vào stack thay vì đệ quy
+                    stack.append((item["linkcode"], depth + 1))
+
+            last_link = data.get("_links", {}).get("last", "")
+            m         = re.search(r"page=(\d+)", last_link)
+            last_page = int(m.group(1)) if m else 1
+            if page >= last_page:
+                break
+            page += 1
+
     return links
 
 # ── Keyboards ─────────────────────────────────────────────────────────────────
@@ -486,7 +506,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if m:
                 all_links.append({"name": m.group(1), "size": "?", "url": u})
 
-        user_sessions[chat_id] = {"links": all_links}
+        user_sessions[chat_id] = {"links": all_links, "created_at": _time.time()}
 
         lines = [f"`{i}.` {item['name']} - {item['size']}" for i, item in enumerate(all_links, 1)]
         list_text = f"*Tìm thấy {len(all_links)} tệp:*\n\n" + "\n".join(lines)
