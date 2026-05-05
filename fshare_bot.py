@@ -89,6 +89,12 @@ def format_speed(bps):
     except Exception:
         return "0 B/s"
 
+def escape_md(text):
+    """Escape ký tự đặc biệt Markdown trong tên file."""
+    for ch in ['_', '*', '[', ']', '`']:
+        text = text.replace(ch, f'\\{ch}')
+    return text
+
 def progress_bar(pct, width=10):
     filled = int(width * pct / 100)
     return "[" + "#" * filled + "-" * (width - filled) + "]"
@@ -96,6 +102,7 @@ def progress_bar(pct, width=10):
 # ── DS API ────────────────────────────────────────────────────────────────────
 
 def _ds_get(path, params=None, _is_auth_call=False):
+    """Gọi DS API — không tự retry, để ds_request() xử lý."""
     global ds_sid
     if params is None:
         params = {}
@@ -103,37 +110,27 @@ def _ds_get(path, params=None, _is_auth_call=False):
         params["_sid"] = ds_sid
     qs  = urllib.parse.urlencode(params)
     url = f"{DS_HOST}/webapi/{path}?{qs}"
-    try:
-        req  = urllib.request.Request(url)
-        resp = urllib.request.urlopen(req, timeout=10)
-        return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 403 and not _is_auth_call:
-            # Re-login và thử lại — chỉ khi không phải đang gọi auth
-            ds_sid = None
-            if ds_login():
-                params["_sid"] = ds_sid
-                qs  = urllib.parse.urlencode(params)
-                url = f"{DS_HOST}/webapi/{path}?{qs}"
-                req  = urllib.request.Request(url)
-                resp = urllib.request.urlopen(req, timeout=10)
-                return json.loads(resp.read())
-        raise
+    req  = urllib.request.Request(url)
+    resp = urllib.request.urlopen(req, timeout=10)
+    return json.loads(resp.read())
 
 def ds_login():
     global ds_sid
-    data = _ds_get("auth.cgi", {
-        "api":     "SYNO.API.Auth",
-        "version": "3",
-        "method":  "login",
-        "account": DS_USER,
-        "passwd":  DS_PASS,
-        "session": "DownloadStation",
-        "format":  "sid",
-    }, _is_auth_call=True)  # Đánh dấu là auth call — không trigger re-login
-    if data.get("success"):
-        ds_sid = data["data"]["sid"]
-        return True
+    try:
+        data = _ds_get("auth.cgi", {
+            "api":     "SYNO.API.Auth",
+            "version": "3",
+            "method":  "login",
+            "account": DS_USER,
+            "passwd":  DS_PASS,
+            "session": "DownloadStation",
+            "format":  "sid",
+        })
+        if data.get("success"):
+            ds_sid = data["data"]["sid"]
+            return True
+    except Exception as e:
+        logger.error(f"Đăng nhập DS thất bại: {e}")
     return False
 
 def ds_ensure_login():
@@ -142,16 +139,32 @@ def ds_ensure_login():
         ds_login()
 
 def ds_request(path, params, retry=True):
+    """Gọi DS API với retry và auto re-login khi session hết hạn."""
     global ds_sid
     ds_ensure_login()
-    data = _ds_get(path, params)
-    if not data.get("success") and data.get("error", {}).get("code") in (105, 106, 107):
-        # Session expired — re-login once
+    try:
+        data = _ds_get(path, params)
+        err_code = data.get("error", {}).get("code")
+        # Session hết hạn (105, 106, 107) hoặc chưa auth (400)
+        if not data.get("success") and err_code in (105, 106, 107, 400):
+            if retry:
+                logger.warning(f"Session hết hạn (code {err_code}), đang đăng nhập lại...")
+                ds_sid = None
+                if ds_login():
+                    return ds_request(path, params, retry=False)
+        return data
+    except urllib.error.URLError as e:
+        logger.error(f"Lỗi kết nối DS: {e}")
         if retry:
+            logger.info("Thử kết nối lại DS...")
+            _time.sleep(2)
             ds_sid = None
-            ds_login()
-            return ds_request(path, params, retry=False)
-    return data
+            if ds_login():
+                return ds_request(path, params, retry=False)
+        return {"success": False, "error": {"code": -1}}
+    except Exception as e:
+        logger.error(f"Lỗi DS API: {e}")
+        return {"success": False, "error": {"code": -1}}
 
 def ds_task_list():
     data = ds_request("DownloadStation/task.cgi", {
@@ -380,15 +393,16 @@ async def _show_tasks(message):
         pct    = int(dl / size * 100) if size > 0 else 0
         speed  = int(t.get("additional", {}).get("transfer", {}).get("speed_download", 0))
         name   = t["title"][:30] + "..." if len(t["title"]) > 30 else t["title"]
+        name   = escape_md(name)
 
         if status == "downloading":
             line = f"`{i}.` {name}\n    {progress_bar(pct)} {pct}% - {format_speed(speed)}"
         elif status == "finished":
-            line = f"`{i}.` {name}\n    [Hoan tat] - {format_size(size)}"
+            line = f"`{i}.` {name}\n    [Hoàn tất] - {format_size(size)}"
         elif status == "paused":
-            line = f"`{i}.` {name}\n    [Tam dung] {pct}%"
+            line = f"`{i}.` {name}\n    [Tạm dừng] {pct}%"
         elif status == "error":
-            line = f"`{i}.` {name}\n    [Loi]"
+            line = f"`{i}.` {name}\n    [Lỗi]"
         else:
             line = f"`{i}.` {name}\n    [{status}]"
         lines.append(line)
@@ -449,7 +463,7 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not finished:
         await update.message.reply_text("Chưa có tệp nào hoàn tất.")
         return
-    lines = [f"- {t['title']} ({format_size(t.get('size', 0))})" for t in finished]
+    lines = [f"- {escape_md(t['title'])} ({format_size(t.get('size', 0))})" for t in finished]
     text  = f"*Đã tải xong ({len(finished)} tệp):*\n\n" + "\n".join(lines)
     if len(text) > 4000:
         text = text[:4000] + "\n..."
