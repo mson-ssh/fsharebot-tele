@@ -186,24 +186,8 @@ echo ""
 echo -e "  ${BOLD}Nhập thông tin cấu hình:${NC}"
 echo ""
 
-# Bot Token
-while true; do
-    read -p "  Bot Token (từ @BotFather): " BOT_TOKEN
-    if [ -n "$BOT_TOKEN" ]; then break; fi
-    echo -e "${RED}  ✗ Token không được để trống.${NC}"
-done
-
-# Chat ID
-echo ""
-echo -e "  ${YELLOW}Tip:${NC} Nhắn tin cho @userinfobot trên Telegram để lấy Chat ID."
-echo ""
-while true; do
-    read -p "  Chat ID của bạn: " ALLOWED_ID
-    if [[ "$ALLOWED_ID" =~ ^-?[0-9]+$ ]]; then break; fi
-    echo -e "${RED}  ✗ Chat ID phải là số.${NC}"
-done
-
-# DS credentials
+# ── Bước 1: NAS credentials + verify ─────────────────────────────────────────
+echo -e "  ${CYAN}Bước 1/2 — Thông tin NAS${NC}"
 echo ""
 while true; do
     while true; do
@@ -222,9 +206,9 @@ while true; do
     # DS Port
     echo ""
     while true; do
-        read -p "  Port DS: " DS_PORT
+        read -p "  Cổng DS (Port): " DS_PORT
         if [ -n "$DS_PORT" ]; then break; fi
-        echo -e "${RED}  ✗ Port DS không được để trống.${NC}"
+        echo -e "${RED}  ✗ Cổng DS không được để trống.${NC}"
     done
 
     DS_HOST="http://localhost:$DS_PORT"
@@ -267,10 +251,32 @@ PYEOF
                 echo -e "${RED}  ✗ Sai tài khoản hoặc mật khẩu. Vui lòng nhập lại.${NC}"
             fi
         else
-            echo -e "${RED}  ✗ Kết nối thất bại (mã lỗi: $ERR_CODE). Vui lòng kiểm tra Port DS.${NC}"
+            echo -e "${RED}  ✗ Kết nối thất bại (mã lỗi: $ERR_CODE). Vui lòng kiểm tra cổng DS.${NC}"
         fi
         echo ""
     fi
+done
+
+# ── Bước 2: Telegram credentials ─────────────────────────────────────────────
+echo ""
+echo -e "  ${CYAN}Bước 2/2 — Thông tin Telegram${NC}"
+echo ""
+
+# Bot Token
+while true; do
+    read -p "  Bot Token (từ @BotFather): " BOT_TOKEN
+    if [ -n "$BOT_TOKEN" ]; then break; fi
+    echo -e "${RED}  ✗ Token không được để trống.${NC}"
+done
+
+# Chat ID
+echo ""
+echo -e "  ${YELLOW}Tip:${NC} Nhắn tin cho @userinfobot trên Telegram để lấy Chat ID."
+echo ""
+while true; do
+    read -p "  Chat ID của bạn: " ALLOWED_ID
+    if [[ "$ALLOWED_ID" =~ ^-?[0-9]+$ ]]; then break; fi
+    echo -e "${RED}  ✗ Chat ID phải là số.${NC}"
 done
 
 echo ""
