@@ -25,7 +25,11 @@ from telegram.ext import (
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
+import subprocess
+
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+BOT_FILE    = os.path.abspath(__file__)
+REPO_URL    = "https://raw.githubusercontent.com/mson-ssh/fsharebot-tele/main/fshare_bot.py"
 
 def load_config():
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -48,11 +52,12 @@ DS_PASS    = _cfg["DS_PASS"]
 USERAGENT        = "pyLoad-B1RS5N"
 POLL_INTERVAL    = 30
 DISK_WARN_GB     = 50
-SESSION_TTL      = 600    # 10 phút — xoá user_session không hoạt động
-DS_SESSION_TTL   = 3600   # 1 giờ — xoá download_session task bị xoá thủ công
-PREV_TASKS_LIMIT = 500    # Giới hạn tối đa entries trong prev_tasks
-BATCH_SIZE       = 200    # Số link tối đa thêm vào DS mỗi lần
-TASKS_PER_PAGE   = 5      # Số task hiển thị mỗi trang
+SESSION_TTL      = 600
+DS_SESSION_TTL   = 3600
+PREV_TASKS_LIMIT = 500
+BATCH_SIZE       = 200
+TASKS_PER_PAGE   = 5
+VERSION          = "1.0"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -925,6 +930,71 @@ async def check_tasks(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Lỗi kiểm tra tác vụ: {e}")
 
+# ── /update ───────────────────────────────────────────────────────────────────
+
+async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+
+    msg = await update.message.reply_text("Đang kiểm tra phiên bản mới...")
+
+    try:
+        # Tải file mới về file tạm
+        tmp_file = BOT_FILE + ".new"
+        result = subprocess.run(
+            ["curl", "-fsSL", REPO_URL, "-o", tmp_file],
+            capture_output=True, timeout=30
+        )
+
+        if result.returncode != 0:
+            await msg.edit_text("Tải phiên bản mới thất bại. Vui lòng thử lại.")
+            return
+
+        # Đọc VERSION từ file mới
+        remote_version = None
+        try:
+            with open(tmp_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VERSION"):
+                        remote_version = line.split("=")[1].strip().strip('"').strip("'")
+                        break
+        except Exception:
+            pass
+
+        # So sánh phiên bản
+        if remote_version and remote_version == VERSION:
+            subprocess.run(["rm", "-f", tmp_file])
+            await msg.edit_text(
+                f"Đây đang là bản mới nhất (v{VERSION})."
+            )
+            return
+
+        # Kiểm tra syntax file mới
+        check = subprocess.run(
+            ["python3", "-m", "py_compile", tmp_file],
+            capture_output=True
+        )
+
+        if check.returncode != 0:
+            subprocess.run(["rm", "-f", tmp_file])
+            await msg.edit_text("Phiên bản mới có lỗi. Huỷ cập nhật.")
+            return
+
+        # Thay thế file cũ
+        subprocess.run(["mv", "-f", tmp_file, BOT_FILE])
+
+        version_text = f"v{VERSION} → v{remote_version}" if remote_version else "phiên bản mới"
+        await msg.edit_text(
+            f"Đã cập nhật lên {version_text}.\n"
+            "Bot sẽ khởi động lại trong 3 giây..."
+        )
+
+        await asyncio.sleep(3)
+        subprocess.Popen(["systemctl", "restart", "fshare-bot"])
+
+    except Exception as e:
+        await msg.edit_text(f"Cập nhật thất bại: {e}")
+
 # ── Bot setup ─────────────────────────────────────────────────────────────────
 
 async def post_init(app):
@@ -936,6 +1006,7 @@ async def post_init(app):
         BotCommand("done",   "Tệp đã hoàn tất"),
         BotCommand("clear",  "Xoá tác vụ đã xong"),
         BotCommand("cancel", "Huỷ tiến trình đang thực thi"),
+        BotCommand("update", "Cập nhật bot lên phiên bản mới"),
     ])
     await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     logger.info("Bot đã khởi tạo thành công.")
@@ -955,6 +1026,7 @@ def main():
     app.add_handler(CommandHandler("clear",  cmd_clear))
     app.add_handler(CommandHandler("done",   cmd_done))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
+    app.add_handler(CommandHandler("update", cmd_update))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
