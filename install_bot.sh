@@ -50,14 +50,15 @@ echo ""
 echo -e "  ${CYAN}1.${NC} Cài đặt bot mới"
 echo -e "  ${CYAN}2.${NC} Kiểm tra trạng thái bot"
 echo -e "  ${CYAN}3.${NC} Gỡ cài đặt bot"
-echo -e "  ${CYAN}4.${NC} Huỷ"
+echo -e "  ${CYAN}4.${NC} Debug kết nối"
+echo -e "  ${CYAN}5.${NC} Huỷ"
 echo ""
 echo -e "  ${BOLD}Lưu ý:${NC} Thông tin của bạn được mã hoá 100%,"
 echo -e "  được lưu trên local và của riêng bạn."
 echo ""
 
 while true; do
-    read -p "  Nhập lựa chọn [1/2/3/4]: " CHOICE
+    read -p "  Nhập lựa chọn [1/2/3/4/5]: " CHOICE
     case "$CHOICE" in
         1) break ;;
         2)
@@ -100,11 +101,74 @@ while true; do
             exit 0
             ;;
         4)
+            echo ""
+            if [ ! -f "$CONFIG_FILE" ]; then
+                echo -e "${RED}  ✗ Không tìm thấy file cấu hình. Vui lòng cài đặt trước.${NC}"
+                exit 1
+            fi
+
+            echo -e "  ${BOLD}Đang đọc cấu hình...${NC}"
+            DS_HOST=$(python3 -c "import json,base64; d=json.load(open('$CONFIG_FILE')); print(base64.b64decode(d['DS_HOST']).decode())" 2>/dev/null)
+            DS_USER=$(python3 -c "import json,base64; d=json.load(open('$CONFIG_FILE')); print(base64.b64decode(d['DS_USER']).decode())" 2>/dev/null)
+            DS_PASS=$(python3 -c "import json,base64; d=json.load(open('$CONFIG_FILE')); print(base64.b64decode(d['DS_PASS']).decode())" 2>/dev/null)
+
+            echo -e "  DS Host     : $DS_HOST"
+            echo -e "  DS User     : $DS_USER"
+            echo ""
+
+            # Kiem tra DS login
+            echo -e "${YELLOW}  →${NC} Kiểm tra đăng nhập Download Station..."
+            LOGIN=$(curl -s "$DS_HOST/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$DS_USER'))")&passwd=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$DS_PASS'))")&session=DownloadStation&format=sid")
+            SUCCESS=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('success','false'))" 2>/dev/null)
+
+            if [ "$SUCCESS" = "True" ]; then
+                echo -e "${GREEN}  [OK] Đăng nhập DS thành công.${NC}"
+                SID=$(echo $LOGIN | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['sid'])" 2>/dev/null)
+
+                # Kiem tra Storage API
+                echo -e "${YELLOW}  →${NC} Kiểm tra Storage API..."
+                STORAGE=$(curl -s "$DS_HOST/webapi/entry.cgi?api=SYNO.Storage.CGI.Storage&version=1&method=load_info&_sid=$SID")
+                STOR_OK=$(echo $STORAGE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('success','false'))" 2>/dev/null)
+
+                if [ "$STOR_OK" = "True" ]; then
+                    echo -e "${GREEN}  [OK] Storage API hoạt động.${NC}"
+                    echo $STORAGE | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for v in d['data'].get('volumes', []):
+    free  = int(v['size']['total']) - int(v['size']['used'])
+    total = int(v['size']['total'])
+    name  = v.get('vol_desc') or v.get('id','')
+    print(f'  Volume: {name} — {free/1024**3:.1f} GB còn / {total/1024**3:.1f} GB')
+" 2>/dev/null
+                else
+                    echo -e "${RED}  [WARN] Storage API lỗi: $STORAGE${NC}"
+                fi
+
+                # Kiem tra DS Task API
+                echo -e "${YELLOW}  →${NC} Kiểm tra Task API..."
+                TASKS=$(curl -s "$DS_HOST/webapi/DownloadStation/task.cgi?api=SYNO.DownloadStation.Task&version=1&method=list&_sid=$SID")
+                TASK_OK=$(echo $TASKS | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('success','false'))" 2>/dev/null)
+                if [ "$TASK_OK" = "True" ]; then
+                    TASK_COUNT=$(echo $TASKS | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d['data'].get('tasks',[])))" 2>/dev/null)
+                    echo -e "${GREEN}  [OK] Task API hoạt động — $TASK_COUNT tác vụ hiện tại.${NC}"
+                else
+                    echo -e "${RED}  [WARN] Task API lỗi.${NC}"
+                fi
+
+            else
+                echo -e "${RED}  [FAIL] Đăng nhập DS thất bại.${NC}"
+                echo -e "  Kết quả: $LOGIN"
+            fi
+            echo ""
+            exit 0
+            ;;
+        5)
             echo -e "  ${RED}✗ Đã huỷ.${NC}"
             exit 0
             ;;
         *)
-            echo -e "${RED}  ✗ Lựa chọn không hợp lệ.${NC}"
+            echo -e "${RED}  ✗ Lựa chọn không hợp lệ. Vui lòng nhập 1, 2, 3, 4 hoặc 5.${NC}"
             ;;
     esac
 done
@@ -162,6 +226,9 @@ echo ""
 # ── Cài đặt ───────────────────────────────────────────────────────────────────
 echo -e "${YELLOW}  →${NC} Tạo thư mục bot..."
 mkdir -p "$BOT_DIR"
+
+echo -e "${YELLOW}  →${NC} Cập nhật pip..."
+pip3 install --upgrade pip 2>/dev/null || python3 -m pip install --upgrade pip 2>/dev/null
 
 echo -e "${YELLOW}  →${NC} Cài thư viện python-telegram-bot..."
 pip3 install "python-telegram-bot[job-queue]" --break-system-packages 2>/dev/null || pip3 install "python-telegram-bot[job-queue]"
