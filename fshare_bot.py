@@ -393,21 +393,20 @@ async def _show_tasks(message):
         pct    = int(dl / size * 100) if size > 0 else 0
         speed  = int(t.get("additional", {}).get("transfer", {}).get("speed_download", 0))
         name   = t["title"][:30] + "..." if len(t["title"]) > 30 else t["title"]
-        name   = escape_md(name)
 
         if status == "downloading":
-            line = f"`{i}.` {name}\n    {progress_bar(pct)} {pct}% - {format_speed(speed)}"
+            line = f"{i}. {name}\n    {progress_bar(pct)} {pct}% - {format_speed(speed)}"
         elif status == "finished":
-            line = f"`{i}.` {name}\n    [Hoàn tất] - {format_size(size)}"
+            line = f"{i}. {name}\n    [Hoàn tất] - {format_size(size)}"
         elif status == "paused":
-            line = f"`{i}.` {name}\n    [Tạm dừng] {pct}%"
+            line = f"{i}. {name}\n    [Tạm dừng] {pct}%"
         elif status == "error":
-            line = f"`{i}.` {name}\n    [Lỗi]"
+            line = f"{i}. {name}\n    [Lỗi]"
         else:
-            line = f"`{i}.` {name}\n    [{status}]"
+            line = f"{i}. {name}\n    [{status}]"
         lines.append(line)
 
-    text = "*Danh sách tác vụ:*\n\n" + "\n\n".join(lines)
+    text = f"Danh sách tác vụ (trang {page}/{total_pages}):\n\n" + "\n\n".join(lines)
     if len(text) > 4000:
         text = text[:4000] + "\n...(còn nữa)"
 
@@ -424,9 +423,9 @@ async def _show_tasks(message):
     ])
 
     try:
-        await message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+        await message.edit_text(text, reply_markup=kb)
     except Exception:
-        await message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+        await message.reply_text(text, reply_markup=kb)
 
 # ── /add ──────────────────────────────────────────────────────────────────────
 
@@ -463,11 +462,11 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not finished:
         await update.message.reply_text("Chưa có tệp nào hoàn tất.")
         return
-    lines = [f"- {escape_md(t['title'])} ({format_size(t.get('size', 0))})" for t in finished]
-    text  = f"*Đã tải xong ({len(finished)} tệp):*\n\n" + "\n".join(lines)
+    lines = [f"- {t['title']} ({format_size(t.get('size', 0))})" for t in finished]
+    text  = f"Đã tải xong ({len(finished)} tệp):\n\n" + "\n".join(lines)
     if len(text) > 4000:
         text = text[:4000] + "\n..."
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text)
 
 # ── Message handler ───────────────────────────────────────────────────────────
 
