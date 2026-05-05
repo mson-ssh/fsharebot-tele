@@ -51,6 +51,7 @@ DISK_WARN_GB     = 50
 SESSION_TTL      = 600    # 10 phút — xoá user_session không hoạt động
 DS_SESSION_TTL   = 3600   # 1 giờ — xoá download_session task bị xoá thủ công
 PREV_TASKS_LIMIT = 500    # Giới hạn tối đa entries trong prev_tasks
+BATCH_SIZE       = 200    # Số link tối đa thêm vào DS mỗi lần
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -637,45 +638,86 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _do_download(message, links: list):
     global session_counter
-    msg = await message.reply_text(f"Đang thêm {len(links)} tệp vào Download Station...")
 
-    # Lay danh sach task truoc khi them
-    tasks_before = {t["id"] for t in ds_task_list()}
+    total_links   = len(links)
+    total_success = 0
+    total_failed  = 0
 
-    success_items = []
-    failed = 0
-    for item in links:
-        if ds_add_task(item["url"]):
-            success_items.append(item)
-        else:
-            failed += 1
+    # Chia links thành các batch
+    batches = [links[i:i + BATCH_SIZE] for i in range(0, total_links, BATCH_SIZE)]
+    total_batches = len(batches)
 
-    success = len(success_items)
-    if success > 0 and failed == 0:
-        result = f"Đã thêm *{success}* tệp vào Download Station và đang tải về.\n\nKiểm tra tiến độ tại /tasks"
-    elif success > 0 and failed > 0:
-        result = f"Đã thêm *{success}* tệp vào Download Station và đang tải về.\nThất bại: *{failed}* tệp.\n\nKiểm tra tiến độ tại /tasks"
+    if total_batches > 1:
+        msg = await message.reply_text(
+            f"Đang thêm *{total_links}* tệp vào Download Station "
+            f"({total_batches} đợt, mỗi đợt tối đa {BATCH_SIZE} tệp)...",
+            parse_mode="Markdown"
+        )
     else:
-        result = f"Thêm tệp thất bại. Vui lòng thử lại."
-    await msg.edit_text(result, parse_mode="Markdown")
+        msg = await message.reply_text(
+            f"Đang thêm *{total_links}* tệp vào Download Station...",
+            parse_mode="Markdown"
+        )
 
-    # Tao phien tai moi
-    if success > 0:
-        try:
-            tasks_after  = {t["id"] for t in ds_task_list()}
-            new_task_ids = list(tasks_after - tasks_before)
-            session_counter += 1
-            sid = session_counter
-            download_sessions[sid] = {
-                "task_ids":   new_task_ids,
-                "names":      [item.get("name", "") for item in success_items],
-                "chat_id":    message.chat_id,
-                "done_ids":   set(),
-                "error_ids":  set(),
-                "start_time": int(_time.time()),
-            }
-        except Exception as e:
-            logger.error(f"Lỗi tạo phiên tải: {e}")
+    for batch_idx, batch in enumerate(batches, 1):
+        if total_batches > 1:
+            await msg.edit_text(
+                f"Đang thêm đợt *{batch_idx}/{total_batches}* "
+                f"({len(batch)} tệp)...",
+                parse_mode="Markdown"
+            )
+
+        tasks_before = {t["id"] for t in ds_task_list()}
+
+        success_items = []
+        failed = 0
+        for item in batch:
+            if ds_add_task(item["url"]):
+                success_items.append(item)
+            else:
+                failed += 1
+
+        total_success += len(success_items)
+        total_failed  += failed
+
+        # Tao phien tai cho batch nay
+        if success_items:
+            try:
+                tasks_after  = {t["id"] for t in ds_task_list()}
+                new_task_ids = list(tasks_after - tasks_before)
+                session_counter += 1
+                sid = session_counter
+                download_sessions[sid] = {
+                    "task_ids":   new_task_ids,
+                    "names":      [item.get("name", "") for item in success_items],
+                    "chat_id":    message.chat_id,
+                    "done_ids":   set(),
+                    "error_ids":  set(),
+                    "start_time": int(_time.time()),
+                }
+            except Exception as e:
+                logger.error(f"Lỗi tạo phiên tải batch {batch_idx}: {e}")
+
+        # Nghỉ giữa các batch để tránh quá tải DS
+        if batch_idx < total_batches:
+            await asyncio.sleep(2)
+
+    # Thông báo kết quả cuối
+    if total_success > 0 and total_failed == 0:
+        result = (
+            f"Đã thêm *{total_success}* tệp vào Download Station và đang tải về.\n\n"
+            f"Kiểm tra tiến độ tại /tasks"
+        )
+    elif total_success > 0 and total_failed > 0:
+        result = (
+            f"Đã thêm *{total_success}* tệp vào Download Station và đang tải về.\n"
+            f"Thất bại: *{total_failed}* tệp.\n\n"
+            f"Kiểm tra tiến độ tại /tasks"
+        )
+    else:
+        result = "Thêm tệp thất bại. Vui lòng thử lại."
+
+    await msg.edit_text(result, parse_mode="Markdown")
 
 # ── Push notification (job queue) ─────────────────────────────────────────────
 
@@ -743,8 +785,9 @@ async def check_tasks(context: ContextTypes.DEFAULT_TYPE):
         for sid in finished_sessions:
             del download_sessions[sid]
 
-        # Xoá download_sessions quá hạn TTL (task bị xoá thủ công trên DS)
+        # Xoá download_sessions và user_sessions quá hạn TTL
         now = _time.time()
+
         expired_dl = [
             sid for sid, s in download_sessions.items()
             if now - s.get("start_time", now) > DS_SESSION_TTL
@@ -753,8 +796,6 @@ async def check_tasks(context: ContextTypes.DEFAULT_TYPE):
             del download_sessions[sid]
             logger.info(f"Đã xoá phiên tải hết hạn: session {sid}")
 
-        # Dọn dẹp user_sessions hết hạn TTL
-        now = _time.time()
         expired_sessions = [
             cid for cid, s in user_sessions.items()
             if now - s.get("created_at", now) > SESSION_TTL
